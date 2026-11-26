@@ -2,7 +2,7 @@
  *
  * Everything you save is a thing in the Void. Its time decides how far away it is (void_layout.js): the newest things float
  * near you and older ones recede into the dark behind, and distance fades into the page's own colour, so the far past is a
- * haze. You scroll to fall back through time, drag to look around, and click a thing to fly to it (Esc flies back out).
+ * haze. You scroll to pan and pinch to move through time, drag to look around, and click a thing to fly to it (Esc flies back out).
  * A date and a thin timeline say where in time you are.
  *
  * It offers the same small interface the old wall did (blocks, links, on, addNode, select …), so what was built on that
@@ -192,8 +192,10 @@
 
     // ── the camera: falls through time, looks around, flies ──
     var cam = { x: 0, y: 0, z: 8 }, tgt = { x: 0, y: 0, z: 8 }, look = { yaw: 0, pitch: 0, ty: 0, tp: 0 }, par = { x: 0, y: 0 }, fly = null, back = null, W = 1, H = 1;
-    var FOCUS = 7;                                          // you look at things this far ahead of you, so the camera is always 7 units in front of the moment it shows
-    var zRange = function () { return { max: depth.zMax + FOCUS, min: depth.zMin + FOCUS }; };
+    var FOCUS = 12;                                         // you look at things this far ahead of you, so the camera is always 12 units in front of the moment it shows
+    var OUT = 90;                                           // and you can pull back this far past the present, to see the whole space from far away
+    var front = function () { return depth.zMax + FOCUS; };  // where the present is
+    var zRange = function () { return { max: front() + OUT, min: depth.zMin + FOCUS }; };
     var ease = function (t) { return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2; };
     function flyPose(to, ms) {
       if (reduced) { cam.x = tgt.x = to.x; cam.y = tgt.y = to.y; cam.z = tgt.z = to.z; fly = null; return; }
@@ -202,12 +204,12 @@
     // How far back to stand so a box w by h units fills about `share` of the view (the camera sees 2·tan(fov/2) across, per unit of distance)
     function standOff(w, h, share) {
       var t = 2 * Math.tan((camera ? camera.fov : 52) * Math.PI / 360), asp = (W || 1) / (H || 1);
-      return Math.max(3.4, h / (t * share), w / (t * asp * share));
+      return Math.max(6, h / (t * share), w / (t * asp * share));
     }
     function flyTo(b) {                                       // fly to a thing, remembering where we were (once, until we come back)
       var it = items[b.id]; if (!it) return;
       if (!back) back = { x: cam.x, y: cam.y, z: cam.z };
-      var z = it.z + standOff(it.w, it.h, 0.5);
+      var z = it.z + standOff(it.w, it.h, 0.25);          // stand back: the thing is clear, and its neighbours are still in view
       tgt.x = it.mesh.position.x; tgt.y = it.mesh.position.y; tgt.z = z; look.ty = look.tp = 0;
       flyPose({ x: tgt.x, y: tgt.y, z: z });
     }
@@ -216,11 +218,11 @@
       if (!back) back = { x: cam.x, y: cam.y, z: cam.z };
       var x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9, zn = -1e9;
       its.forEach(function (it) { var p = it.mesh.position; x0 = Math.min(x0, p.x - it.w / 2); x1 = Math.max(x1, p.x + it.w / 2); y0 = Math.min(y0, p.y - it.h / 2); y1 = Math.max(y1, p.y + it.h / 2); zn = Math.max(zn, it.z); });
-      var z = clamp(zn + standOff(x1 - x0, y1 - y0, 0.8), zRange().min, zRange().max + 40);
+      var z = clamp(zn + standOff(x1 - x0, y1 - y0, 0.8), zRange().min, zRange().max);
       tgt.x = (x0 + x1) / 2; tgt.y = (y0 + y1) / 2; tgt.z = z; look.ty = look.tp = 0; flyPose({ x: tgt.x, y: tgt.y, z: z }, 1300);
     }
     function flyBack() { if (!back) return false; var p = back; back = null; tgt.x = p.x; tgt.y = p.y; tgt.z = p.z; flyPose({ x: p.x, y: p.y, z: p.z }); return true; }
-    function flyNow() { back = null; var r = zRange(); tgt.x = 0; tgt.y = 0; tgt.z = r.max; look.ty = look.tp = 0; flyPose({ x: 0, y: 0, z: r.max }, 1400); }
+    function flyNow() { back = null; var r = zRange(); tgt.x = 0; tgt.y = 0; tgt.z = front(); look.ty = look.tp = 0; flyPose({ x: 0, y: 0, z: front() }, 1400); }
 
     // ── the date and the timeline ──
     function drawTimeline() {
@@ -246,6 +248,7 @@
       if (fly) { var t = clamp((now - fly.t0) / fly.ms, 0, 1), e = ease(t); cam.x = fly.from.x + (fly.to.x - fly.from.x) * e; cam.y = fly.from.y + (fly.to.y - fly.from.y) * e; cam.z = fly.from.z + (fly.to.z - fly.from.z) * e; if (t >= 1) fly = null; }
       else { var k = reduced ? 1 : 0.12; cam.x += (tgt.x - cam.x) * k; cam.y += (tgt.y - cam.y) * k; cam.z += (tgt.z - cam.z) * k; }
       var lk = reduced ? 1 : 0.14; look.yaw += (look.ty - look.yaw) * lk; look.pitch += (look.tp - look.pitch) * lk;
+      var out = Math.max(0, cam.z - front()); scene.fog.near = 16 + out; scene.fog.far = 78 + out;
       camera.position.set(cam.x + par.x * 0.35, cam.y + par.y * 0.25, cam.z); camera.rotation.set(look.pitch + par.y * 0.02, look.yaw - par.x * 0.025, 0, 'YXZ');
       // things seen from close by are sharpened by their own hover; a thing under the pointer grows a little
       Object.keys(items).forEach(function (id) { var it = items[id], want = (hover === id || sel === id) ? 1.05 : 1; it.hover += (want - it.hover) * 0.2; var s = it.hover; it.mesh.scale.set(it.w * s, it.h * s, 1); });
@@ -265,7 +268,8 @@
         var b = p.it.b, d = b.data || {}, name = b.type === 'node' && d.kind !== 'label' && d.kind !== 'genre' ? d.name : '';
         var html = '<i>' + pad(b.n) + '</i>' + (name ? '. ' + esc(name) : '');
         if (c._h !== html) { c.innerHTML = html; c._h = html; }
-        c.style.display = ''; c.style.transform = 'translate(' + p.x.toFixed(1) + 'px,' + p.y.toFixed(1) + 'px) translate(-50%,-100%)'; c.style.opacity = String(clamp(1 - p.dz / 46, 0.12, 1)); c.classList.toggle('on', sel === b.id || hover === b.id);
+        c.style.display = ''; c.style.transform = 'translate(' + p.x.toFixed(1) + 'px,' + p.y.toFixed(1) + 'px) translate(-50%,-100%)'; var lit = sel === b.id || hover === b.id, far = clamp(1 - Math.max(0, cam.z - front()) / 35, 0, 1);   // seen from far away the names fade out, so only the shapes remain
+        c.style.opacity = String(lit ? 1 : clamp(1 - p.dz / 46, 0.12, 1) * far); c.classList.toggle('on', sel === b.id || hover === b.id);
       });
     }
 
@@ -312,9 +316,11 @@
     canvas.addEventListener('pointerdown', onDown); canvas.addEventListener('pointermove', onMove); canvas.addEventListener('pointerup', onUp); canvas.addEventListener('pointercancel', onUp);
     canvas.addEventListener('pointerleave', function () { ringEl.classList.remove('on'); par.x = par.y = 0; hover = null; });
     canvas.addEventListener('dblclick', function (e) { var id = pick(e); if (id) fire('dblclick', blockById(id)); });
-    canvas.addEventListener('wheel', function (e) {                                    // scroll to fall through time; sideways scroll slides across it
-      e.preventDefault(); var r = zRange(), f = e.ctrlKey ? 0.06 : 0.022; fly = null; back = null;
-      tgt.z = clamp(tgt.z - e.deltaY * f, r.min, r.max); tgt.x += e.deltaX * 0.012;
+    canvas.addEventListener('wheel', function (e) {                                    // two-finger scroll pans across the wall; pinch (a ctrl-wheel) moves slowly through depth
+      e.preventDefault(); var r = zRange(); fly = null; back = null;
+      var cap = function (v, m) { return Math.max(-m, Math.min(m, v)); };               // one flick of momentum must never throw the camera across the space
+      if (e.ctrlKey) tgt.z = clamp(tgt.z + cap(e.deltaY, 12) * 0.05, r.min, r.max);
+      else { var pz = Math.max(1, (cam.z - depth.zMax) / FOCUS); tgt.x += cap(e.deltaX, 60) * 0.004 * pz; tgt.y -= cap(e.deltaY, 60) * 0.004 * pz; }   // pan faster the further back you are
     }, { passive: false });
     var fire = function (kind, b) { hooks[kind].forEach(function (f) { try { f(b); } catch (_) {} }); };
 
@@ -440,7 +446,7 @@
       camera = new THREE.PerspectiveCamera(52, 1, 0.05, 300); ray = new THREE.Raycaster(); ndc = new THREE.Vector2(); plane = new THREE.Plane();
       var lm = function (color, op) { var g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(0), 3)); return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: new THREE.Color(color), transparent: true, opacity: op, fog: true, depthWrite: false })); };
       lineMine = lm(T.text, 0.6); lineNear = lm(T.muted, 0.28); lineMine.frustumCulled = lineNear.frustumCulled = false; scene.add(lineMine, lineNear);
-      loaded = true; var added = numberAll(); sync(); var r = zRange(); cam.z = tgt.z = r.max + 4; flyNow(); if (added && blocks.length) dirty();
+      loaded = true; var added = numberAll(); sync(); cam.z = tgt.z = front() + 4; flyNow(); if (added && blocks.length) dirty();
       addEventListener('keydown', onKey);
       requestAnimationFrame(frame);
     })();
