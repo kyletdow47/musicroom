@@ -98,6 +98,23 @@ chk(pr.get("ok"), "custom field attaches to a reference")
 s = c.post(f"/api/thread/{tid}/to-set").get_json()
 chk(s.get("set_id") is not None, "thread→set still works with references aboard")
 
+
+# a video saved AT A MOMENT: the time is kept, each moment of one video is its own note, and bad times are ignored
+vid = "https://youtu.be/abcdefghijk"
+m1 = c.post("/api/listen/reference", json={"url": vid + "?t=559", "title": "A talk", "source": "YouTube",
+                                           "summary": "the line about borrowing", "timestamp_sec": 559}).get_json()
+m2 = c.post("/api/listen/reference", json={"url": vid + "?t=1200", "title": "A talk", "timestamp_sec": 1200.5}).get_json()
+m1b = c.post("/api/listen/reference", json={"url": vid + "?t=559", "title": "A talk", "timestamp_sec": 5}).get_json()
+chk(m1["created"] and m2["created"] and m1["id"] != m2["id"], "two moments of one video are two notes")
+chk(m1["timestamp_sec"] == 559 and m2["timestamp_sec"] == 1200.5, "the time in the video is kept on the note")
+chk(m1["note_text"] == "the line about borrowing" and m1["ref_url"] == vid + "?t=559", "the person's own note and the timed link are kept")
+chk(m1b["created"] is False and m1b["id"] == m1["id"] and m1b["timestamp_sec"] == 559, "saving the same moment again returns it and changes nothing")
+for label, val in (("negative", -5), ("text", "559"), ("true", True), ("huge", 10**9), ("none", None)):
+    mm = c.post("/api/listen/reference", json={"url": f"https://youtu.be/zzzzzzzzzzz?x={label}", "title": "T", "timestamp_sec": val}).get_json()
+    chk(mm["created"] and mm["timestamp_sec"] == 0, f"a {label} time is ignored, not stored")
+old = c.post("/api/listen/reference", json={"url": "https://example.com/no-time", "title": "No time"}).get_json()
+chk(old["timestamp_sec"] == 0, "an article saved the old way still has no time")
+
 # validation
 bad = c.post("/api/listen/reference", json={"title": "no url"})
 chk(bad.status_code == 400, "missing url rejected")

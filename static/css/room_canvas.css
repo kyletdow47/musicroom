@@ -68,6 +68,16 @@
 .rc-text__h{ font-family:var(--f-display); font-size:1.7rem; line-height:1.1; color:var(--text); margin-bottom:8px; }
 .rc-text__b{ font-family:Inter, system-ui, sans-serif; font-size:.9rem; line-height:1.55; color:var(--text); white-space:pre-wrap; }
 
+/* a quote: the words in the display face, where they came from in small caps, the time as a link */
+.rc-quote{ margin:0; height:100%; box-sizing:border-box; padding:16px 18px 14px; display:flex; flex-direction:column; justify-content:space-between; gap:12px; overflow:auto; cursor:grab; }
+.rc-quote__t{ margin:0; font-family:var(--f-display); font-style:italic; font-size:1.45rem; line-height:1.22; color:var(--text); white-space:pre-wrap; }
+.rc-quote__src{ display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 12px; padding-top:9px; border-top:1px solid var(--border);
+  font-size:.66rem; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
+.rc-quote__no{ opacity:.7; }
+.rc-quote__go{ appearance:none; border:none; background:none; padding:0; margin-left:auto; color:var(--text); font:inherit; letter-spacing:inherit; text-transform:inherit; cursor:pointer; }
+.rc-quote__go:hover{ text-decoration:underline; text-underline-offset:3px; }
+.rc-quote__at{ margin-left:auto; }
+
 /* image */
 .rc-img{ width:100%; height:100%; display:block; pointer-events:none; }
 .rc-img--cover{ object-fit:cover; } .rc-img--contain{ object-fit:contain; background:var(--bg); }
@@ -122,7 +132,9 @@
 .rc-sheet__x:hover{ color:var(--text); }
 .rc-sheet input[type="text"], .rc-sheet input:not([type]){ width:100%; box-sizing:border-box; appearance:none; border:1px solid var(--border); background:var(--bg); color:var(--text);
   font:inherit; font-size:.84rem; padding:8px 10px; border-radius:0; outline:none; }
-.rc-sheet input:focus{ border-color:var(--gold); }
+.rc-sheet input:focus, .rc-sheet textarea:focus{ border-color:var(--gold); }
+.rc-sheet textarea{ width:100%; box-sizing:border-box; appearance:none; border:1px solid var(--border); background:var(--bg); color:var(--text); font:inherit; font-size:.84rem;
+  line-height:1.45; padding:8px 10px; border-radius:0; outline:none; resize:vertical; min-height:84px; }
 .rc-row{ display:flex; gap:6px; align-items:center; margin:8px 0; flex-wrap:wrap; }
 .rc-row input{ flex:1; min-width:0; }
 .rc-lbl{ font-size:.64rem; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin-right:2px; }

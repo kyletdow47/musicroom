@@ -454,6 +454,12 @@
   .ex-video__bar{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 18px; color:var(--ink); font-size:.9rem; }
   .ex-video__frame{ flex:1; display:flex; align-items:center; justify-content:center; padding:0 18px 24px; min-height:0; }
   .ex-video__frame iframe{ width:min(100%,1100px); aspect-ratio:16/9; border:0; border-radius:12px; background:#000; }
+  /* save this moment: the time in the video, a note of your own, and (if you like) a room's wall */
+  .ex-video__save{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; width:min(100%,1100px); margin:0 auto; padding:0 18px 20px; box-sizing:content-box; color:var(--ink); }
+  .ex-video__save .ex-in{ flex:1 1 200px; } .ex-video__save .ex-sel{ flex:0 1 170px; }
+  .ex-video__save .ex-vs-at{ flex:0 0 78px; text-align:center; }
+  .ex-video__save .ex-hint{ flex:1 1 100%; }
+  .ex-video__save [hidden]{ display:none !important; }
   .ex-boxtabs{ display:flex; flex-direction:column; gap:5px; }
   .ex-boxtab{ display:flex; align-items:center; gap:9px; padding:9px 11px; border-radius:11px; cursor:pointer;
     background:var(--accent-dim); border:1px solid var(--border); transition:all .16s var(--spring); }
@@ -877,6 +883,15 @@
 <div id="ex-video" class="ex-video">
   <div class="ex-video__bar"><span id="ex-video-title"></span><button class="ex-panel__x" onclick="closeVideo()" title="Close">✕</button></div>
   <div class="ex-video__frame" id="ex-video-frame"></div>
+  <div class="ex-video__save" id="ex-vsave">
+    <span class="ex-sec">Save this moment</span>
+    <input class="ex-in ex-vs-at" id="ex-vs-at" value="0:00" size="7" aria-label="The time in the video">
+    <button class="ex-btn ex-btn--ghost" id="ex-vs-now" type="button" hidden title="Use the time the video is at now">now</button>
+    <input class="ex-in" id="ex-vs-note" maxlength="500" placeholder="your own note (optional)" aria-label="Your own note">
+    <select class="ex-sel" id="ex-vs-room" aria-label="Also put it on the wall of a room"><option value="">not on a wall</option></select>
+    <button class="ex-btn" id="ex-vs-save" type="button">Save</button>
+    <span class="ex-hint" id="ex-vs-msg" role="status" aria-live="polite"></span>
+  </div>
 </div>
 
 <!-- PLAY YOUR WISHLIST — a deck you sort with a flick (Tinder-but-multi) -->
@@ -1232,13 +1247,95 @@ function watchVideo(vid, it){
   if (!vid) return openItem(it);
   fetch('/api/seinnteoir/pause', { method:'POST' }).catch(()=>{});   // don't layer the embed's audio over a playing mix
   document.getElementById('ex-video-frame').innerHTML =
-    `<iframe src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(vid)}?autoplay=1" ` +
+    `<iframe src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(vid)}?autoplay=1&enablejsapi=1" ` +
     `allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe>`;
   document.getElementById('ex-video-title').textContent = (it && it.title) || '';
   document.getElementById('ex-video').classList.add('open');
+  momentOpen(vid, it);
 }
 function closeVideo(){ document.getElementById('ex-video').classList.remove('open');
-  document.getElementById('ex-video-frame').innerHTML = ''; }   // unload the iframe → stops playback
+  document.getElementById('ex-video-frame').innerHTML = ''; vidCtx = null; }   // unload the iframe → stops playback
+
+// SAVE A MOMENT — the time in the video, a note of your own, and (if you like) a room's wall.
+// It becomes a moment in Listen (a note that links to that time) and, if a room is chosen, a Mix
+// block on that room's wall that starts there. The embed can say where it is (the player's own
+// message); if it never does, "now" stays hidden and the time is typed.
+let vidCtx = null;                                    // { vid, it, now } for the video that is open
+const vsEl = id => document.getElementById(id);
+function clockText(sec){
+  if (!(sec >= 0) || !isFinite(sec)) return '0:00';
+  const s = Math.floor(sec), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60, p = n => (n < 10 ? '0' : '') + n;
+  return h ? `${h}:${p(m)}:${p(r)}` : `${m}:${p(r)}`;
+}
+function clockSecs(txt){                              // "9:19" · "1:02:03" · "9m19s" · "559"  →  seconds, or null
+  txt = String(txt || '').trim().toLowerCase(); let m, out = null;
+  if ((m = /^(\d{1,3}):(\d{1,2}):(\d{1,2})$/.exec(txt))) out = (m[2] < 60 && m[3] < 60) ? +m[1] * 3600 + +m[2] * 60 + +m[3] : null;
+  else if ((m = /^(\d{1,3}):(\d{1,2})$/.exec(txt))) out = (m[2] < 60) ? +m[1] * 60 + +m[2] : null;
+  else if ((m = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/.exec(txt)) && (m[1] || m[2] || m[3])) out = (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0);
+  return out != null && out <= 360000 ? out : null;
+}
+const momentUrl = (vid, sec) => 'https://youtu.be/' + encodeURIComponent(vid) + (sec > 0 ? '?t=' + Math.floor(sec) : '');
+let vsRooms = null;                                   // the rooms, fetched the first time a video opens
+function momentOpen(vid, it){
+  vidCtx = { vid, it: it || {}, now: null };
+  vsEl('ex-vs-at').value = '0:00'; vsEl('ex-vs-note').value = ''; vsEl('ex-vs-msg').textContent = '';
+  vsEl('ex-vs-now').hidden = true; vsEl('ex-vs-save').disabled = false;
+  const fr = vsEl('ex-video-frame').querySelector('iframe');
+  if (fr){ const hello = () => { try { fr.contentWindow.postMessage(JSON.stringify({ event:'listening', id:1, channel:'widget' }), 'https://www.youtube-nocookie.com'); } catch (_) {} };
+    fr.addEventListener('load', () => { hello(); setTimeout(hello, 1500); }); }
+  if (!vsRooms) fetch('/api/places').then(r => r.json()).then(rows => {
+    vsRooms = Array.isArray(rows) ? rows : [];
+    const sel = vsEl('ex-vs-room');
+    vsRooms.forEach(p => { const o = document.createElement('option'); o.value = String(p.id); o.textContent = 'on the wall of ' + (p.name || 'a room'); sel.appendChild(o); });
+  }).catch(() => { vsRooms = []; });
+}
+window.addEventListener('message', e => {             // the embed's own report of where it is
+  if (!vidCtx || e.origin !== 'https://www.youtube-nocookie.com') return;
+  let d = e.data; try { if (typeof d === 'string') d = JSON.parse(d); } catch (_) { return; }
+  const t = d && d.info && d.info.currentTime;
+  if (typeof t === 'number' && isFinite(t)){ vidCtx.now = t; vsEl('ex-vs-now').hidden = false; }
+});
+vsEl('ex-vs-now').addEventListener('click', () => { if (vidCtx && vidCtx.now != null) vsEl('ex-vs-at').value = clockText(vidCtx.now); });
+// add a Mix block, below what is already there, to a room's wall (the same saved layout the wall itself uses).
+// Returns false, and changes nothing, if that moment is already on the wall.
+async function putMomentOnWall(pid, block){
+  const cur = await fetch('/api/room/canvas/' + pid).then(r => r.json());
+  const blocks = Array.isArray(cur.blocks) ? cur.blocks : [];
+  if (blocks.some(b => b && b.type === 'mix' && b.data && b.data.url === block.url)) return false;
+  const bottom = blocks.reduce((m, b) => Math.max(m, (b.y || 0) + (b.h || 0)), 0);
+  blocks.push({ id: 'k' + Math.random().toString(36).slice(2, 9), type: 'mix', x: 32, y: Math.ceil((blocks.length ? bottom + 24 : 120) / 8) * 8,
+                w: 440, h: 280, z: blocks.length + 1, data: block });
+  const r = await fetch('/api/room/canvas/' + pid, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ v: 1, blocks }) });
+  if (!r.ok) throw new Error('wall');
+  return true;
+}
+async function saveVideoMoment(){
+  if (!vidCtx) return;
+  const msg = vsEl('ex-vs-msg'), btn = vsEl('ex-vs-save');
+  const at = clockSecs(vsEl('ex-vs-at').value);
+  if (at === null){ msg.textContent = 'Type the time like 9:19.'; return; }
+  const it = vidCtx.it, url = momentUrl(vidCtx.vid, at), note = vsEl('ex-vs-note').value.trim();
+  btn.disabled = true; msg.textContent = 'Saving…';
+  try {
+    const r = await fetch('/api/listen/reference', { method:'POST', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ url, title: it.title || 'A video', source: it.source_name || 'YouTube', image_url: it.image_url || '', summary: note, timestamp_sec: at }) }).then(x => x.json());
+    if (!r || !r.id) throw new Error('listen');
+    let where = ' in Listen';
+    const pid = +vsEl('ex-vs-room').value;
+    if (pid){
+      try {
+        const added = await putMomentOnWall(pid, { url, title: it.title || '', embed: true, start: at, caption: note });
+        const room = ((vsRooms || []).find(p => p.id === pid) || {}).name || 'that room';
+        where += added ? ' and on the wall of ' + room : ' (it is already on the wall of ' + room + ')';
+      } catch (_) { where += ', but it could not be put on the wall'; }
+    }
+    msg.textContent = (r.created === false ? 'Already saved' : 'Saved') + ' at ' + clockText(at) + where + '.';
+  } catch (_) { msg.textContent = 'Could not save that.'; }
+  btn.disabled = false;
+}
+vsEl('ex-vs-save').addEventListener('click', saveVideoMoment);
+vsEl('ex-vs-at').addEventListener('keydown', e => { if (e.key === 'Enter') saveVideoMoment(); });
+vsEl('ex-vs-note').addEventListener('keydown', e => { if (e.key === 'Enter') saveVideoMoment(); });
 // play a mix/podcast through the persistent Player — it keeps going as you move
 // around the app (the server downloads then plays, so a brief "buffering…").
 function playFeedAudio(it){

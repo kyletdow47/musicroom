@@ -5567,12 +5567,18 @@ def api_save_reference():
     then join threads/projects, take custom fields, sit on the canvas and be
     linked to listening moments like any other atom (the polyrhythm-video →
     polyrhythmic-techno-moments connection). Idempotent per URL: saving the
-    same article twice returns the existing note."""
+    same article twice returns the existing note.
+
+    A video can be saved at a moment in it: "timestamp_sec" (seconds, 0 or more) is kept on
+    the note, and the link should carry the same time (youtu.be/…?t=559), so each moment of
+    one video is its own note."""
     d = request.get_json() or {}
     url = (d.get("url") or "").strip()
     title = (d.get("title") or "").strip()
     if not url or not title:
         return jsonify({"error": "url and title required"}), 400
+    at = d.get("timestamp_sec")
+    at = float(at) if isinstance(at, (int, float)) and not isinstance(at, bool) and 0 <= at < 1_000_000 else 0.0
     existing = query_one(
         "SELECT id FROM listening_notes WHERE kind='reference' AND ref_url=?", (url,))
     if existing:
@@ -5583,11 +5589,11 @@ def api_save_reference():
         text = (d.get("summary") or "").strip() or title
         nid = execute(
             """INSERT INTO listening_notes
-               (kind, note_text, note_category, ref_url, ref_title, ref_source, ref_image_url)
-               VALUES ('reference', ?, ?, ?, ?, ?, ?)""",
+               (kind, note_text, note_category, ref_url, ref_title, ref_source, ref_image_url, timestamp_sec)
+               VALUES ('reference', ?, ?, ?, ?, ?, ?, ?)""",
             (text, (d.get("category") or "").strip(), url, title,
              (d.get("source") or "").strip() or None,
-             (d.get("image_url") or "").strip() or None))
+             (d.get("image_url") or "").strip() or None, at))
         created = True
     # optionally land it straight inside a project / on a thread
     pid = d.get("project_id")
@@ -16177,6 +16183,20 @@ except ImportError:
 try:
     import record_shop as _record_shop
     _record_shop.register(app)
+except ImportError:
+    pass
+
+# Find it (paste a YouTube link, say album / mix / talk, bring the music home) lives in find_music.py.
+try:
+    import find_music as _find_music
+    _find_music.register(app, get_spotify=lambda: _get_spotify())
+except ImportError:
+    pass
+
+# Connections (the neighbourhood of a record: label, genres, other records, similar artists) lives in connections.py.
+try:
+    import connections as _connections
+    _connections.register(app)
 except ImportError:
     pass
 

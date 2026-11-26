@@ -1,8 +1,9 @@
 // room_canvas.js — the user's own wall of BLOCKS in their music room.
 //
-// A block is a box the user makes, drags, resizes and fills: words, an image,
-// one record, a playlist (a place, a set, or records picked by hand), a mix
-// (a link that plays in place where the site allows it) or a link. Blocks
+// A block is a box the user makes, drags, resizes and fills: words, a quote
+// (with where it came from, and the time in it), an image, one record, a playlist
+// (a place, a set, or records picked by hand), a mix (a link that plays in place
+// where the site allows it, from a time you choose) or a link. Blocks
 // overlap freely (↑/↓ for front/back). Everything is direct manipulation on
 // the canvas itself — no form on the side. The layout is saved per room
 // (POST /api/room/canvas/<place_id>), images upload to the app's own folder.
@@ -17,6 +18,7 @@ window.MRRoomCanvas = (function () {
   const SNAP = 8, MIN_W = 120, MIN_H = 72;
   const TYPES = {
     text:     { label: 'Words',    hint: 'a heading and some words',             w: 360, h: 200 },
+    quote:    { label: 'Quote',    hint: 'words someone said, and where from',   w: 380, h: 240 },
     image:    { label: 'Image',    hint: 'a picture from your computer or a link', w: 320, h: 320 },
     record:   { label: 'Record',   hint: 'one record from your room',              w: 240, h: 310 },
     playlist: { label: 'Playlist', hint: 'a place, a set, or records you pick',    w: 380, h: 380 },
@@ -27,14 +29,69 @@ window.MRRoomCanvas = (function () {
   const uid = () => 'k' + Math.random().toString(36).slice(2, 9);
   const coverUrl = (t, s) => t && (t.id || t.track_id) ? `/api/artwork/${t.id || t.track_id}?s=${s}&v=${t.art_v || 0}` : '';
 
+  // ── times: "9:19", "1:02:03", "9m19s", "559" ─────────────────────────────
+  function fmtClock(sec) {
+    if (sec == null || sec === '' || !isFinite(sec) || sec < 0) return '';
+    const s = Math.floor(sec), h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+    const p = n => (n < 10 ? '0' : '') + n;
+    return h ? `${h}:${p(m)}:${p(r)}` : `${m}:${p(r)}`;
+  }
+  function parseClock(str) {
+    str = String(str == null ? '' : str).trim().toLowerCase();
+    if (!str) return null;
+    let m, out = null;
+    if ((m = /^(\d{1,3}):(\d{1,2}):(\d{1,2})$/.exec(str))) out = (m[2] < 60 && m[3] < 60) ? (+m[1]) * 3600 + (+m[2]) * 60 + (+m[3]) : null;
+    else if ((m = /^(\d{1,3}):(\d{1,2})$/.exec(str))) out = (m[2] < 60) ? (+m[1]) * 60 + (+m[2]) : null;
+    else if ((m = /^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/.exec(str)) && (m[1] || m[2] || m[3])) out = (+m[1] || 0) * 3600 + (+m[2] || 0) * 60 + (+m[3] || 0);
+    return out != null && out <= 360000 ? out : null;
+  }
+  // the time a link already carries: ?t=559 · ?t=9m19s · ?start=559 · #t=559s
+  function startFromUrl(url) {
+    try {
+      const u = new URL(url);
+      const raw = u.searchParams.get('t') || u.searchParams.get('start') || ((/^#t=(.+)$/.exec(u.hash) || [])[1]);
+      return parseClock(raw);
+    } catch (_) { return null; }
+  }
+  // a link that opens at a time (YouTube only; any other address is returned as it was)
+  function withStart(url, sec) {
+    try {
+      const u = new URL(url);
+      const h = u.hostname.replace(/^www\.|^m\./, '');
+      if (!(h === 'youtube.com' || h === 'youtu.be') || !(sec > 0)) return url;
+      u.searchParams.delete('start'); u.searchParams.set('t', String(Math.floor(sec)));
+      return u.toString();
+    } catch (_) { return url; }
+  }
+  // a quote's time: the one typed in, else the one its link carries
+  const quoteAt = d => (d.at != null ? d.at : (d.url ? startFromUrl(d.url) : null));
+
+  // a quote block's inside, as markup. Pure (and everything typed is escaped), so it can be tested without a page.
+  function quoteHtml(d) {
+    d = d || {};
+    const from = [d.who, d.source].map(x => (x || '').trim()).filter(Boolean).join(', ');
+    const at = quoteAt(d);
+    const when = at != null
+      ? (d.url ? `<button class="rc-quote__go" data-act="openurl" title="Open this moment">▶ ${esc(fmtClock(at))}</button>` : `<span class="rc-quote__at">${esc(fmtClock(at))}</span>`)
+      : (d.url ? `<button class="rc-quote__go" data-act="openurl" title="Open the source">↗ source</button>` : '');
+    return (d.text || '').trim() ? `
+          <figure class="rc-quote">
+            <blockquote class="rc-quote__t">${esc(d.text)}</blockquote>
+            <figcaption class="rc-quote__src">${from ? `<span>— ${esc(from)}</span>` : '<span class="rc-quote__no">no source yet</span>'}${when}</figcaption>
+          </figure>` : `<button class="rc-fillme" data-act="fill">+ add a quote</button>`;
+  }
+
   // ── mix / link helpers ───────────────────────────────────────────────────
-  function embedFor(url) {
+  function embedFor(url, start) {
     try {
       const u = new URL(url);
       const h = u.hostname.replace(/^www\.|^m\./, '');
       if (h === 'youtube.com' || h === 'youtu.be' || h === 'music.youtube.com') {
         const id = h === 'youtu.be' ? u.pathname.slice(1) : (u.searchParams.get('v') || (u.pathname.match(/\/(?:embed|shorts|live)\/([\w-]+)/) || [])[1]);
-        if (id) return { src: `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}`, kind: 'video' };
+        if (id) {
+          const t = start != null ? start : startFromUrl(url);
+          return { src: `https://www.youtube-nocookie.com/embed/${encodeURIComponent(id)}${t > 0 ? '?start=' + Math.floor(t) : ''}`, kind: 'video' };
+        }
       }
       if (h === 'soundcloud.com' || h === 'on.soundcloud.com')
         return { src: `https://w.soundcloud.com/player/?url=${encodeURIComponent(url)}&color=%23c9a84c&auto_play=false&hide_related=true&show_comments=false&show_user=true&visual=true`, kind: 'audio' };
@@ -46,7 +103,10 @@ window.MRRoomCanvas = (function () {
         return { src: `https://www.mixcloud.com/widget/iframe/?hide_cover=1&light=0&feed=${encodeURIComponent(u.pathname)}`, kind: 'audio' };
       if (h === 'vimeo.com') {
         const id = (u.pathname.match(/\/(\d+)/) || [])[1];
-        if (id) return { src: `https://player.vimeo.com/video/${id}`, kind: 'video' };
+        if (id) {
+          const t = start != null ? start : startFromUrl(url);
+          return { src: `https://player.vimeo.com/video/${id}${t > 0 ? '#t=' + Math.floor(t) + 's' : ''}`, kind: 'video' };
+        }
       }
     } catch (_) {}
     return null;
@@ -203,12 +263,14 @@ window.MRRoomCanvas = (function () {
             <div class="rc-pl__rows">${ts.map((t, i) => `<div class="rc-pl__row" data-i="${i}"><img class="rc-pl__cover" src="${coverUrl(t, 192)}" alt="" loading="lazy" draggable="false"><div class="rc-pl__meta"><div class="rc-pl__t" data-act="open" data-tid="${t.id}">${esc(t.title || 'Untitled')}</div><div class="rc-pl__a">${esc(t.artist_name || t.artist || '')}</div></div><button class="rc-pl__play" data-act="playrow" data-i="${i}" title="Play now">▶</button></div>`).join('')}</div>
           </div>` : `<button class="rc-fillme" data-act="fill">+ choose a playlist</button>`;
       } else if (b.type === 'mix') {
-        const em = d.url && d.embed !== false ? embedFor(d.url) : null;
+        const em = d.url && d.embed !== false ? embedFor(d.url, d.start) : null;
         body.innerHTML = !d.url ? `<button class="rc-fillme" data-act="fill">+ paste a mix or video link</button>`
           : em ? `<iframe class="rc-embed rc-embed--${em.kind}" src="${esc(em.src)}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>`
           : linkCard(d);
       } else if (b.type === 'link') {
         body.innerHTML = d.url ? linkCard(d) : `<button class="rc-fillme" data-act="fill">+ paste a link</button>`;
+      } else if (b.type === 'quote') {
+        body.innerHTML = quoteHtml(d);
       }
     }
     const linkCard = d => `<div class="rc-link" data-act="openurl" title="${esc(d.url)}">${d.image ? `<img class="rc-link__img" src="${esc(d.image)}" alt="" draggable="false">` : ''}<div class="rc-link__meta"><div class="rc-link__src">${esc(d.source || hostOf(d.url))} ↗</div><div class="rc-link__t">${esc(d.title || d.url)}</div></div></div>`;
@@ -233,14 +295,24 @@ window.MRRoomCanvas = (function () {
         <div class="rc-sheet__h">A playlist</div>
         <div class="rc-row rc-tabs"><button class="rc-btn ${d.kind === 'place' ? 'on' : ''}" data-s="kind" data-v="place">a place</button><button class="rc-btn ${d.kind === 'set' ? 'on' : ''}" data-s="kind" data-v="set">a set</button><button class="rc-btn ${!d.kind || d.kind === 'picks' ? 'on' : ''}" data-s="kind" data-v="picks">records I pick</button></div>
         <div data-s="pane"></div>`;
+      else if (b.type === 'quote') sheet.innerHTML = `
+        <div class="rc-sheet__h">A quote</div>
+        <textarea data-s="qtext" rows="4" placeholder="the words, as they were said or written">${esc(d.text || '')}</textarea>
+        <div class="rc-row"><input data-s="who" placeholder="who said it" value="${esc(d.who || '')}"></div>
+        <div class="rc-row"><input data-s="source" placeholder="where from: a talk, a book, a film" value="${esc(d.source || '')}"></div>
+        <div class="rc-row"><input data-s="qurl" placeholder="a link to it (optional)" value="${esc(d.url || '')}"></div>
+        <div class="rc-row"><span class="rc-lbl">at</span><input data-s="qat" placeholder="m:ss" value="${esc(quoteAt(d) != null ? fmtClock(quoteAt(d)) : '')}"></div>
+        <div class="rc-hint">Keep quotes short, and say where they come from. A link with a time in it (…?t=559) fills in the time.</div>`;
       else if (b.type === 'mix' || b.type === 'link') sheet.innerHTML = `
         <div class="rc-sheet__h">${b.type === 'mix' ? 'A mix or video' : 'A link'}</div>
         <div class="rc-row"><input data-s="url" placeholder="paste the address" value="${esc(d.url || '')}"><button class="rc-btn rc-btn--primary" data-s="useurl">use</button></div>
         ${d.url ? `<div class="rc-row"><input data-s="title" placeholder="title" value="${esc(d.title || '')}"></div>` : ''}
         ${b.type === 'mix' && d.url ? `<div class="rc-row"><span class="rc-lbl">show</span><button class="rc-btn ${d.embed !== false ? 'on' : ''}" data-s="embed" data-v="1">the player</button><button class="rc-btn ${d.embed === false ? 'on' : ''}" data-s="embed" data-v="0">a card</button></div>` : ''}
-        <div class="rc-hint">${b.type === 'mix' ? 'YouTube, SoundCloud, Mixcloud and Vimeo play here. Anything else becomes a card that opens in your browser.' : 'Opens in your browser.'}</div>`;
+        ${b.type === 'mix' && d.url && embedFor(d.url) && embedFor(d.url).kind === 'video' ? `<div class="rc-row"><span class="rc-lbl">starts at</span><input data-s="start" placeholder="0:00" value="${esc(d.start != null ? fmtClock(d.start) : '')}"></div>` : ''}
+        <div class="rc-hint">${b.type === 'mix' ? 'YouTube, SoundCloud, Mixcloud and Vimeo play here, and a video can start at a time. Anything else becomes a card that opens in your browser.' : 'Opens in your browser.'}</div>`;
       sheet.innerHTML += `<button class="rc-sheet__x" data-s="close" title="Close">✕</button>`;
       positionSheet(b);
+      if (b.type === 'quote') { const q = sheet.querySelector('[data-s="qtext"]'); if (q) setTimeout(() => q.focus(), 30); }
       if (b.type === 'record') { renderPicker(sheet.querySelector('[data-s="list"]'), '', t => { b.data.track = snap_t(t); renderAll(); dirty(); closeSheet(); }); const q = sheet.querySelector('[data-s="q"]'); q.oninput = () => renderPicker(sheet.querySelector('[data-s="list"]'), q.value, t => { b.data.track = snap_t(t); renderAll(); dirty(); closeSheet(); }); setTimeout(() => q.focus(), 30); }
       if (b.type === 'playlist') renderPlaylistPane(b);
     }
@@ -310,7 +382,7 @@ window.MRRoomCanvas = (function () {
       else if (s === 'useurl') {
         const inp = sheet.querySelector('[data-s="url"]'); const url = (inp.value || '').trim(); if (!url) return;
         if (b.type === 'image') { b.data.src = url; b.data.srcUrl = url; renderAll(); dirty(); openSheet(b.id); }
-        else { t.textContent = '…'; resolveLink(/^https?:\/\//.test(url) ? url : 'https://' + url).then(m => { Object.assign(b.data, { url: /^https?:\/\//.test(url) ? url : 'https://' + url }, m); renderAll(); dirty(); openSheet(b.id); }); }
+        else { t.textContent = '…'; resolveLink(/^https?:\/\//.test(url) ? url : 'https://' + url).then(m => { Object.assign(b.data, { url: /^https?:\/\//.test(url) ? url : 'https://' + url }, m); if (b.type === 'mix' && b.data.start == null) { const s0 = startFromUrl(b.data.url); if (s0 > 0) b.data.start = s0; } renderAll(); dirty(); openSheet(b.id); }); }
       }
       else if (s === 'fit') { b.data.fit = t.dataset.v; renderAll(); dirty(); openSheet(b.id); }
       else if (s === 'embed') { b.data.embed = t.dataset.v === '1'; renderAll(); dirty(); openSheet(b.id); }
@@ -318,7 +390,31 @@ window.MRRoomCanvas = (function () {
       else if (s === 'kind') { b.data.kind = t.dataset.v; sheet.querySelectorAll('[data-s="kind"]').forEach(x => x.classList.toggle('on', x === t)); renderPlaylistPane(b); }
     });
     sheet.addEventListener('change', e => { const f = e.target.closest('[data-s="file"]'); const b = byId(sheetFor); if (f && b && f.files[0]) uploadImage(b, f.files[0]); });
-    sheet.addEventListener('input', e => { const t = e.target.closest('[data-s="title"]'); const b = byId(sheetFor); if (t && b) { b.data.title = t.value; renderAll(); dirty(); } });
+    const QUOTE_KEYS = { qtext: 'text', who: 'who', source: 'source', qurl: 'url' };
+    sheet.addEventListener('input', e => {
+      const b = byId(sheetFor); if (!b) return;
+      const t = e.target.closest('[data-s="title"]');
+      if (t) { b.data.title = t.value; renderAll(); dirty(); return; }
+      const f = e.target.closest('[data-s]'); if (!f) return;
+      const k = f.dataset.s;
+      if (b.type === 'quote' && QUOTE_KEYS[k]) { b.data[QUOTE_KEYS[k]] = f.value; renderAll(); dirty(); }
+      else if ((b.type === 'quote' && k === 'qat') || (b.type === 'mix' && k === 'start')) {
+        const key = k === 'qat' ? 'at' : 'start', s = parseClock(f.value);
+        if (s != null) b.data[key] = s; else if (!f.value.trim()) delete b.data[key];
+        renderAll(); dirty();
+      }
+    });
+    // a quote's link can say the time, and (if you have not named the source) what the page is called
+    sheet.addEventListener('change', e => {
+      const f = e.target.closest('[data-s="qurl"]'); const b = byId(sheetFor); if (!f || !b || b.type !== 'quote') return;
+      const url = f.value.trim(); if (!/^https?:\/\//.test(url)) return;
+      const s = startFromUrl(url);
+      if (b.data.at == null && s != null) { b.data.at = s; const at = sheet.querySelector('[data-s="qat"]'); if (at) at.value = fmtClock(s); renderAll(); dirty(); }
+      if (!(b.data.source || '').trim()) resolveLink(url).then(m => {
+        const bb = byId(sheetFor); if (!bb || bb !== b || (b.data.source || '').trim() || !m.title || m.title === hostOf(url)) return;
+        b.data.source = m.title; const src = sheet.querySelector('[data-s="source"]'); if (src) src.value = m.title; renderAll(); dirty();
+      });
+    });
     sheet.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('[data-s="url"]')) { e.preventDefault(); sheet.querySelector('[data-s="useurl"]').click(); } if (e.key === 'Escape') closeSheet(); });
 
     // ── events: add menu ──
@@ -351,7 +447,7 @@ window.MRRoomCanvas = (function () {
       else if (a === 'cueall') { cue((b.data.tracks || []).map(toItem), false); flash(act, '✓ cued'); }
       else if (a === 'playrow') playNow(toItem((b.data.tracks || [])[+act.dataset.i]));
       else if (a === 'open') { const tid = +(act.dataset.tid || (b.data.track || {}).id); if (tid && opts.openTrack) { try { opts.openTrack(tid); } catch (_) { location.href = `/room?track=${tid}`; } } }
-      else if (a === 'openurl') openUrl(b.data.url);
+      else if (a === 'openurl') openUrl(b.type === 'quote' ? withStart(b.data.url, quoteAt(b.data)) : b.data.url);
     });
     function flash(btn, txt) { const o = btn.textContent; btn.textContent = txt; setTimeout(() => { btn.textContent = o; }, 1200); }
     stage.addEventListener('input', e => {
@@ -414,5 +510,5 @@ window.MRRoomCanvas = (function () {
     return { reload: load, addBlock, get blocks() { return blocks; } };
   }
 
-  return { mount, TYPES, embedFor };
+  return { mount, TYPES, embedFor, fmtClock, parseClock, startFromUrl, withStart, quoteHtml };
 })();

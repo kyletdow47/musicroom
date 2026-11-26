@@ -1,0 +1,370 @@
+{# Find it — paste a YouTube link, say what it is (album / mix / talk), bring the music home.
+   Link-only: nothing is downloaded. Spotify is searched through the app's own /api/spotify/search.
+   Logic that is worth testing lives in find_music.py; this page only asks, shows and saves. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Find it — Music Room</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    {{ theme_head|safe }}
+    <link rel="stylesheet" href="/static/css/explore-theme.css">
+    <style>
+        body { margin: 0; background: var(--bg); color: var(--text); min-height: 100vh; }
+        .fd { max-width: 900px; margin: 0 auto; padding: 56px 24px 120px; }
+        .fd__head { display: flex; align-items: baseline; justify-content: space-between;
+                    border-bottom: 1px solid var(--border); padding-bottom: 14px; margin-bottom: 28px; }
+        .fd__head h1 { font-family: var(--f-display); font-weight: 400; font-size: 2.6rem; margin: 0; }
+        .fd__sec { font-family: var(--f-mono); font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+        .fd__lede { font-family: var(--f-mono); font-size: .82rem; color: var(--muted); margin: 0 0 22px; line-height: 1.6; }
+        .fd label:not(.fd__hit) { display: block; font-family: var(--f-mono); font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px; }
+        .fd input[type=text], .fd textarea, .fd select {
+            width: 100%; box-sizing: border-box; background: transparent; color: var(--text);
+            border: 1px solid var(--border); border-radius: 0; padding: 10px 12px;
+            font-family: var(--f-mono); font-size: .85rem; }
+        .fd textarea { min-height: 110px; resize: vertical; }
+        .fd input:focus, .fd textarea:focus, .fd select:focus { outline: 1px solid var(--text); }
+        .fd__row { display: flex; gap: 12px; align-items: flex-end; }
+        .fd__row > div { flex: 1; }
+        .fd__row > button { flex: none; }
+        .fd button { font-family: var(--f-mono); font-size: .72rem; letter-spacing: .1em; text-transform: uppercase;
+                     background: transparent; color: var(--text); border: 1px solid var(--text); border-radius: 0;
+                     padding: 11px 16px; cursor: pointer; }
+        .fd button:hover { background: var(--text); color: var(--bg); }
+        .fd button.go { background: var(--text); color: var(--bg); }
+        .fd button.go:hover { opacity: .85; }
+        .fd button:disabled { opacity: .4; cursor: default; }
+        .fd button:disabled:hover { background: transparent; color: var(--text); }
+        .fd button.go:disabled:hover { background: var(--text); color: var(--bg); }
+        .fd [hidden] { display: none !important; }
+        .fd__msg { font-family: var(--f-mono); font-size: .78rem; color: var(--muted); margin: 14px 0 0; min-height: 1.2em; }
+        .fd__msg.err { color: var(--red); }
+
+        .fd__video { display: flex; gap: 18px; padding: 22px 0; border-bottom: 1px solid var(--border); margin-bottom: 22px; }
+        .fd__video img { width: 176px; height: 99px; object-fit: cover; border: 1px solid var(--border); flex: none; }
+        .fd__video h2 { font-family: var(--f-display); font-weight: 400; font-size: 1.5rem; margin: 0 0 6px; line-height: 1.2; }
+        .fd__video p { font-family: var(--f-mono); font-size: .75rem; color: var(--muted); margin: 0; }
+
+        .fd__kind { display: flex; border: 1px solid var(--border); margin: 0 0 8px; }
+        .fd__kind button { flex: 1; border: 0; border-right: 1px solid var(--border); padding: 14px 10px; }
+        .fd__kind button:last-child { border-right: 0; }
+        .fd__kind button.on { background: var(--text); color: var(--bg); }
+        .fd__guess { font-family: var(--f-mono); font-size: .75rem; color: var(--muted); margin: 0 0 26px; }
+
+        .fd__panel h3 { font-family: var(--f-display); font-weight: 400; font-size: 1.4rem; margin: 0 0 6px; }
+        .fd__panel > p { font-family: var(--f-mono); font-size: .78rem; color: var(--muted); margin: 0 0 16px; line-height: 1.6; }
+
+        .fd__hit { display: flex; gap: 14px; align-items: center; padding: 12px 0; border-top: 1px solid var(--border); cursor: pointer; }
+        .fd__hit:last-child { border-bottom: 1px solid var(--border); }
+        .fd__hit img, .fd__hit .ph { display: block; width: 64px; height: 64px; object-fit: cover; flex: none; border: 1px solid var(--border); background: transparent; }
+        .fd__hit b { font-family: var(--f-display); font-weight: 400; font-size: 1.2rem; display: block; }
+        .fd__hit small { font-family: var(--f-mono); font-size: .72rem; color: var(--muted); }
+        .fd input[type=checkbox], .fd input[type=radio] { flex: none; accent-color: var(--text); }
+        .fd__hit.sel { outline: 1px solid var(--text); outline-offset: -1px; }
+
+        .fd__tr { display: grid; grid-template-columns: 22px 64px 1fr auto; gap: 12px; align-items: center;
+                  padding: 10px 0; border-top: 1px solid var(--border); font-family: var(--f-mono); font-size: .8rem; }
+        .fd__tr:last-child { border-bottom: 1px solid var(--border); }
+        .fd__tr .t { color: var(--muted); }
+        .fd__tr .t a { color: inherit; }
+        .fd__tr .nm b { font-family: var(--f-display); font-weight: 400; font-size: 1.1rem; display: block; }
+        .fd__tr .st { font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); text-align: right; }
+        .fd__tr .st.ok { color: var(--text); }
+        .fd__tr .st a { color: inherit; }
+
+        .fd__land { border-top: 1px solid var(--text); margin-top: 26px; padding-top: 18px; }
+        .fd__land .fd__row { margin-top: 10px; }
+        .fd a { color: var(--text); }
+        @media (max-width: 640px) { .fd__video { flex-direction: column; } .fd__row { flex-direction: column; align-items: stretch; } }
+    </style>
+    <script src="/static/js/room_transition.js"></script>
+    <link rel="stylesheet" href="/static/css/ui.css">
+</head>
+<body>
+{% include "_gr_nav.html" %}
+
+<main class="fd">
+    <div class="fd__head"><h1>Find it</h1><span class="fd__sec">From YouTube</span></div>
+    <p class="fd__lede">Paste a YouTube link. Say what it is, and the Music Room finds the real thing on Spotify.
+        Nothing is downloaded: the video stays a link.</p>
+
+    <div class="fd__row">
+        <div><label for="fd-url">YouTube link</label>
+            <input type="text" id="fd-url" placeholder="https://youtu.be/…" autocomplete="off" spellcheck="false"></div>
+        <button class="go" id="fd-read">Read it</button>
+    </div>
+    <p class="fd__msg" id="fd-msg"></p>
+
+    <section id="fd-result" hidden>
+        <div class="fd__video">
+            <img id="fd-thumb" alt="">
+            <div><h2 id="fd-title"></h2><p id="fd-by"></p></div>
+        </div>
+
+        <label>What is it?</label>
+        <div class="fd__kind" id="fd-kind">
+            <button data-k="album">A full album</button>
+            <button data-k="mix">A mix</button>
+            <button data-k="talk">A talk, lecture or film</button>
+        </div>
+        <p class="fd__guess" id="fd-guess"></p>
+
+        <!-- ALBUM: find the real record on Spotify -->
+        <div class="fd__panel" id="p-album" hidden>
+            <h3>Find the album</h3>
+            <p>Not a slice of the video: the record itself, so it can sit in your room and play.</p>
+            <div class="fd__row">
+                <div><label for="fd-aa">Artist</label><input type="text" id="fd-aa" autocomplete="off"></div>
+                <div><label for="fd-ab">Album</label><input type="text" id="fd-ab" autocomplete="off"></div>
+                <button id="fd-asearch">Search Spotify</button>
+            </div>
+            <div id="fd-ahits"></div>
+            <div id="fd-atracks"></div>
+            <p class="fd__msg" id="fd-conn" hidden><a id="fd-connlink" href="#">See what is around this record: label, genres, similar artists →</a></p>
+        </div>
+
+        <!-- MIX: find each track -->
+        <div class="fd__panel" id="p-mix" hidden>
+            <h3>Find the tracks</h3>
+            <p id="fd-mixnote"></p>
+            <div id="fd-mixpaste" hidden>
+                <label for="fd-paste">Paste the tracklist (from the description, the comments or 1001tracklists)</label>
+                <textarea id="fd-paste" placeholder="0:00 Artist - Title&#10;4:32 Artist - Title"></textarea>
+                <div class="fd__row" style="margin-top:10px"><button id="fd-reparse">Read this tracklist</button></div>
+            </div>
+            <div id="fd-tracks"></div>
+            <div class="fd__row" id="fd-mixbar" hidden style="margin-top:14px"><button class="go" id="fd-mixfind">Find them on Spotify</button></div>
+        </div>
+
+        <!-- TALK: not music; kept as moments -->
+        <div class="fd__panel" id="p-talk" hidden>
+            <h3>Keep it as moments</h3>
+            <p>Not music, so no record to find. Pick the parts worth keeping and each becomes a note in Listen that opens the
+                video at that time. (Quote cards and the moodboard come next.)</p>
+            <div id="fd-chapters"></div>
+            <div class="fd__row" style="margin-top:14px"><div><label for="fd-tnote">Your own note (optional)</label>
+                <input type="text" id="fd-tnote" placeholder="why this matters"></div><button class="go" id="fd-tsave">Save these moments</button></div>
+        </div>
+
+        <!-- LAND: into My Room -->
+        <div class="fd__land" id="fd-land" hidden>
+            <label for="fd-g">Put it in My Room as</label>
+            <select id="fd-g"></select>
+            <div class="fd__row"><div><input type="text" id="fd-gname" placeholder="name of the new grúpa"></div>
+                <button class="go" id="fd-add">Add to My Room</button></div>
+            <p class="fd__msg" id="fd-landmsg"></p>
+        </div>
+    </section>
+</main>
+
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const clock = s => { s = Math.round(s); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = s%60;
+    return (h ? h + ':' + String(m).padStart(2,'0') : m) + ':' + String(x).padStart(2,'0'); };
+  const j = async (url, opt) => { const r = await fetch(url, opt); let d = {}; try { d = await r.json(); } catch(e){}; if (!r.ok && !d.error) d.error = 'Something went wrong'; return d; };
+  const post = (url, body) => j(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  const say = (el, t, err) => { el.textContent = t || ''; el.classList.toggle('err', !!err); };
+
+  let R = null, kind = null, albumPick = null, albumSongs = null, tracks = [], spotifyOn = true;
+
+  // ── 1. read the link ───────────────────────────────────────────────
+  async function read(pasted){
+    say($('fd-msg'), 'Reading the video…');
+    const d = await post('/api/find/read', { url: $('fd-url').value, tracklist_text: pasted || '' });
+    if (d.error) { say($('fd-msg'), d.error, true); return null; }
+    say($('fd-msg'), (d.meta.notes || []).join(' '));
+    return d;
+  }
+  $('fd-read').onclick = async () => {
+    const d = await read(); if (!d) return;
+    R = d; albumPick = null; albumSongs = null; $('fd-atracks').innerHTML = ''; $('fd-conn').hidden = true; tracks = [];
+    $('fd-thumb').src = d.meta.thumbnail_url || '';
+    $('fd-title').textContent = d.meta.title || '(untitled)';
+    $('fd-by').textContent = [d.meta.author, d.meta.duration_s ? clock(d.meta.duration_s) : ''].filter(Boolean).join(' · ');
+    $('fd-aa').value = d.album_guess.artist; $('fd-ab').value = d.album_guess.album;
+    $('fd-result').hidden = false;
+    showGuess(d.guess);
+    choose(d.guess.kind);
+  };
+  $('fd-url').addEventListener('keydown', e => { if (e.key === 'Enter') $('fd-read').click(); });
+
+  const showGuess = g => { $('fd-guess').textContent = 'Looks like: ' + ({album:'a full album', mix:'a mix', talk:'a talk or film'}[g.kind]) + '. ' + g.why + ' Change it if that is wrong.'; };
+
+  // ── 2. what is it? ─────────────────────────────────────────────────
+  function choose(k){
+    kind = k;
+    document.querySelectorAll('#fd-kind button').forEach(b => b.classList.toggle('on', b.dataset.k === k));
+    ['album','mix','talk'].forEach(x => $('p-' + x).hidden = x !== k);
+    $('fd-land').hidden = true;
+    if (k === 'album') { if (!albumPick) searchAlbum(); else landAlbum(); }
+    if (k === 'mix') showMix();
+    if (k === 'talk') showTalk();
+  }
+  $('fd-kind').onclick = e => { const b = e.target.closest('button'); if (b) choose(b.dataset.k); };
+
+  // ── Spotify search (the app's own endpoint) ────────────────────────
+  async function spotify(q){
+    const d = await j('/api/spotify/search?q=' + encodeURIComponent(q));
+    spotifyOn = d.connected !== false;
+    return d;
+  }
+  const notConnected = el => { el.innerHTML = '<p class="fd__msg">Spotify is not connected. <a href="/spotify">Connect it</a>, then search again.</p>'; };
+
+  // ── ALBUM ──────────────────────────────────────────────────────────
+  async function searchAlbum(){
+    const box = $('fd-ahits'); const q = ($('fd-aa').value + ' ' + $('fd-ab').value).trim();
+    if (q.length < 2) return;
+    box.innerHTML = '<p class="fd__msg">Searching Spotify…</p>';
+    const d = await spotify(q);
+    if (!spotifyOn) return notConnected(box);
+    if (d.error) { box.innerHTML = '<p class="fd__msg err">' + esc(d.error) + '</p>'; return; }
+    const albums = (d.results || []).filter(r => r.stream_type === 'album');
+    if (!albums.length) {
+      const u = encodeURIComponent(q);
+      box.innerHTML = '<p class="fd__msg">No album found on Spotify. Try the name differently, or look elsewhere: ' +
+        '<a target="_blank" rel="noopener" href="https://soundcloud.com/search/albums?q=' + u + '">SoundCloud</a> · ' +
+        '<a target="_blank" rel="noopener" href="https://bandcamp.com/search?q=' + u + '">Bandcamp</a></p>';
+      return;
+    }
+    box.innerHTML = albums.map((a, i) => '<label class="fd__hit" data-i="' + i + '">' +
+      (a.thumb ? '<img src="' + esc(a.thumb) + '" alt="">' : '<span class="ph"></span>') +
+      '<div style="flex:1"><b>' + esc(a.title) + '</b><small>' + esc(a.subtitle) + (a.year ? ' · ' + esc(a.year) : '') +
+      (a.tracks ? ' · ' + esc(a.tracks) + ' tracks' : '') + '</small></div><input type="radio" name="fd-a"></label>').join('');
+    box.querySelectorAll('.fd__hit').forEach(h => h.onclick = () => {
+      box.querySelectorAll('.fd__hit').forEach(x => x.classList.remove('sel')); h.classList.add('sel');
+      h.querySelector('input').checked = true; albumPick = albums[+h.dataset.i]; pickAlbum(albumPick);
+    });
+  }
+  $('fd-asearch').onclick = () => { albumPick = null; albumSongs = null; $('fd-atracks').innerHTML = ''; $('fd-conn').hidden = true; $('fd-land').hidden = true; searchAlbum(); };
+
+  // The record's songs, so the grúpa holds every one and not a single "album" element.
+  async function pickAlbum(a){
+    const box = $('fd-atracks'); albumSongs = null; $('fd-land').hidden = true;
+    $('fd-connlink').href = '/connections?' + new URLSearchParams({ kind: 'album', artist: ($('fd-aa').value || a.subtitle || '').trim(), album: a.title || '' });
+    $('fd-conn').hidden = false;
+    const id = (String(a.url).match(/album\/([A-Za-z0-9]+)/) || [])[1];
+    box.innerHTML = '<p class="fd__msg">Reading the songs…</p>';
+    const d = id ? await j('/api/find/album-tracks?id=' + id + '&image=' + encodeURIComponent(a.image || a.thumb || '')) : { error: 'No album id.' };
+    if (albumPick !== a) return;                       // they picked another while this was loading
+    if (d.error || !(d.items || []).length) {
+      box.innerHTML = '<p class="fd__msg err">Spotify would not list the songs on this album' + (d.error ? ' (' + esc(d.error) + ')' : '') +
+        '. The album will go in as one element, and you can play it from there.</p>';
+      landAlbum(); return;
+    }
+    albumSongs = d.items;
+    box.innerHTML = '<label style="margin-top:22px">' + albumSongs.length + ' songs on it</label>' + albumSongs.map((t, i) =>
+      '<div class="fd__tr"><span class="t">' + String(i + 1).padStart(2, '0') + '</span><span></span><span class="nm"><b>' + esc(t.title) + '</b>' +
+      esc(t.subtitle) + '</span><span class="st">' + (t.duration_sec ? clock(t.duration_sec) : '') + '</span></div>').join('');
+    landAlbum();
+  }
+
+  // ── MIX ────────────────────────────────────────────────────────────
+  function showMix(){
+    const hasT = R.entries.some(e => e.kind === 'track');
+    tracks = hasT ? R.entries.filter(e => e.kind === 'track').map(e => ({ ...e, hit: null, state: 'wait', ok: true })) : tracks;
+    $('fd-mixpaste').hidden = hasT;
+    $('fd-mixnote').textContent = hasT
+      ? 'Found ' + tracks.length + ' tracks in the ' + R.from + '. Each is looked up on Spotify; tick the ones to keep.'
+      : 'No tracklist with times was found in the description. Paste one below.';
+    drawTracks();
+    $('fd-mixbar').hidden = !tracks.length;
+  }
+  $('fd-reparse').onclick = async () => {
+    const d = await read($('fd-paste').value); if (!d) return;
+    const ts = d.entries.filter(e => e.kind === 'track');
+    if (!ts.length) { say($('fd-msg'), 'No "time Artist - Title" lines found in that.', true); return; }
+    R.entries = d.entries; R.from = 'pasted text'; R.guess = d.guess; showGuess(d.guess); showMix();
+  };
+  function drawTracks(){
+    $('fd-tracks').innerHTML = tracks.map((t, i) => {
+      const u = encodeURIComponent((t.artist + ' ' + t.title).trim());
+      const st = t.state === 'wait' ? '' : t.state === 'busy' ? 'looking…' :
+        t.hit ? '<span class="ok">on Spotify</span>' : 'not found · <a target="_blank" rel="noopener" href="https://open.spotify.com/search/' + u + '">search</a>';
+      return '<div class="fd__tr"><input type="checkbox" data-i="' + i + '"' + (t.ok ? ' checked' : '') + '>' +
+        '<span class="t"><a target="_blank" rel="noopener" href="' + esc(R.meta.url + '?t=' + Math.round(t.start_s)) + '" title="Play the video from here">' + clock(t.start_s) + '</a></span>' +
+        '<span class="nm"><b>' + esc(t.title) + '</b>' + esc(t.artist) + '</span>' +
+        '<span class="st' + (t.hit ? ' ok' : '') + '">' + st + '</span></div>';
+    }).join('');
+    $('fd-tracks').querySelectorAll('input').forEach(c => c.onchange = () => { tracks[+c.dataset.i].ok = c.checked; });
+  }
+  $('fd-mixfind').onclick = async () => {
+    $('fd-mixfind').disabled = true;
+    for (const t of tracks) {
+      if (t.state === 'done') continue;
+      t.state = 'busy'; drawTracks();
+      const d = await spotify((t.artist + ' ' + t.title).trim());
+      if (!spotifyOn) { $('fd-mixfind').disabled = false; return notConnected($('fd-tracks')); }
+      t.hit = (d.results || []).find(r => r.stream_type === 'track') || null;
+      t.state = 'done'; drawTracks();
+      await new Promise(r => setTimeout(r, 250));
+    }
+    $('fd-mixfind').disabled = false; landMix();
+  };
+
+  // ── TALK ───────────────────────────────────────────────────────────
+  function showTalk(){
+    const rows = R.entries;
+    $('fd-chapters').innerHTML = rows.length ? rows.map((e, i) =>
+      '<div class="fd__tr"><input type="checkbox" data-i="' + i + '" checked><span class="t">' + clock(e.start_s) + '</span>' +
+      '<span class="nm"><b>' + esc(e.artist ? e.artist + ' — ' + e.title : e.title) + '</b></span><span></span></div>').join('')
+      : '<p class="fd__msg">No chapters in the description. The whole video will be saved as one note.</p>';
+  }
+  $('fd-tsave').onclick = async () => {
+    const picked = R.entries.length ? [...$('fd-chapters').querySelectorAll('input:checked')].map(c => R.entries[+c.dataset.i]) : [{ start_s: 0, title: R.meta.title }];
+    if (!picked.length) { say($('fd-msg'), 'Tick at least one part.', true); return; }
+    let made = 0, was = 0;
+    for (const e of picked) {
+      const d = await post('/api/listen/reference', { url: R.meta.url + '?t=' + Math.round(e.start_s), title: (e.artist ? e.artist + ' — ' : '') + e.title,
+        source: 'youtube', image_url: R.meta.thumbnail_url, summary: $('fd-tnote').value, timestamp_sec: e.start_s });
+      if (d.error) { say($('fd-msg'), d.error, true); return; }
+      d.created ? made++ : was++;
+    }
+    say($('fd-msg'), 'Saved ' + made + ' moment' + (made === 1 ? '' : 's') + (was ? ' (' + was + ' already there)' : '') + '. They are in Listen.');
+  };
+
+  // ── LAND in My Room ────────────────────────────────────────────────
+  let pending = null;       // { name, items }
+  async function landReady(name, items){
+    pending = { name, items };
+    const g = await j('/api/grupa?url=' + encodeURIComponent(items[0].url));      // which grúpa already hold the first one?
+    const list = g.grupa || [], have = list.find(x => x.has);
+    $('fd-g').innerHTML = '<option value="">A new grúpa…</option>' + list.map(x => '<option value="' + x.id + '">' + esc(x.name) + (x.has ? ' (already has it)' : '') + '</option>').join('');
+    if (have) $('fd-g').value = String(have.id);
+    $('fd-gname').value = name; $('fd-gname').hidden = !!have;
+    $('fd-land').hidden = false;
+    say($('fd-landmsg'), have ? 'Already in “' + have.name + '” in My Room. Pick another grúpa, or a new one, to add it again.'
+                              : items.length + (items.length === 1 ? ' item' : ' items') + ' ready.');
+    $('fd-land').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  $('fd-g').onchange = () => { $('fd-gname').hidden = !!$('fd-g').value; };
+  const item = r => ({ url: r.url, title: r.title, subtitle: r.subtitle, image: r.image, by_ids: r.by_ids, duration_sec: r.duration_sec });
+  function landAlbum(){ if (albumPick) landReady(albumPick.title, albumSongs && albumSongs.length ? albumSongs : [item(albumPick)]); }
+  function landMix(){
+    const hits = tracks.filter(t => t.ok && t.hit).map(t => item(t.hit));
+    if (hits.length) landReady(R.meta.title || 'A mix', hits); else say($('fd-msg'), 'Nothing found on Spotify to add.', true);
+  }
+  $('fd-add').onclick = async () => {
+    if (!pending) return;
+    $('fd-add').disabled = true;
+    let gid = +$('fd-g').value;
+    if (!gid) {
+      const c = await post('/api/grupa', { name: $('fd-gname').value || pending.name, description: 'From ' + (R.meta.url || 'YouTube') });
+      if (c.error) { say($('fd-landmsg'), c.error, true); $('fd-add').disabled = false; return; }
+      gid = c.id;
+    }
+    const a = await post('/api/grupa/' + gid + '/streams', { items: pending.items });
+    $('fd-add').disabled = false;
+    if (a.error) { say($('fd-landmsg'), a.error, true); return; }
+    $('fd-landmsg').innerHTML = (a.added ? 'Added ' + a.added : 'Already there') + '. <a href="/room?grupa=' + gid + '">Open it in My Room →</a>';
+    $('fd-landmsg').classList.remove('err');
+  };
+})();
+</script>
+<script src="/static/js/gr_nav.js"></script>
+<script src="/static/js/theme.js"></script>
+<script src="/static/js/seinnteoir.js"></script>
+</body>
+</html>

@@ -1,0 +1,522 @@
+{# Connections — the neighbourhood of a record: label, genres, other records, artists that sound alike.
+   Opened from an album (Find it) or typed as /connections?kind=album&artist=…&album=… ; every neighbour
+   can be walked to. The data and the rules live in connections.py; this page draws and asks. #}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Connections — Music Room</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    {{ theme_head|safe }}
+    <link rel="stylesheet" href="/static/css/explore-theme.css">
+    <style>
+        body { margin: 0; background: var(--bg); color: var(--text); min-height: 100vh; }
+        .cn { max-width: 1280px; margin: 0 auto; padding: 40px 24px 80px; }
+        .cn__head { display: flex; align-items: baseline; justify-content: space-between;
+                    border-bottom: 1px solid var(--border); padding-bottom: 14px; margin-bottom: 14px; }
+        .cn__head h1 { font-family: var(--f-display); font-weight: 400; font-size: 2.6rem; margin: 0; }
+        .cn__sec { font-family: var(--f-mono); font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+        .cn__bar { display: flex; align-items: center; justify-content: space-between; margin: 0 0 12px; min-height: 1.4em;
+                   font-family: var(--f-mono); font-size: .72rem; color: var(--muted); gap: 12px; }
+        .cn [hidden] { display: none !important; }
+        .cn__msg { font-family: var(--f-mono); font-size: .8rem; color: var(--muted); line-height: 1.6; }
+        .cn__msg.err { color: var(--red); }
+        .cn__ask { display: flex; gap: 12px; align-items: flex-end; margin: 0 0 22px; }
+        .cn__ask div { flex: 1; }
+        .cn label { display: block; font-family: var(--f-mono); font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px; }
+        .cn input[type=text] { width: 100%; box-sizing: border-box; background: transparent; color: var(--text); border: 1px solid var(--border);
+                               border-radius: 0; padding: 10px 12px; font-family: var(--f-mono); font-size: .85rem; }
+        .cn button { font-family: var(--f-mono); font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; background: transparent;
+                     color: var(--text); border: 1px solid var(--border); border-radius: 0; padding: 8px 12px; cursor: pointer; }
+        .cn button:hover { border-color: var(--text); }
+        .cn button.go { background: var(--text); color: var(--bg); border-color: var(--text); padding: 11px 16px; }
+
+        .cn-start__row { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 14px; }
+        .cn-start .go { background: var(--text); color: var(--bg); border-color: var(--text); padding: 11px 16px; }
+        .cn-start input[type=text] { margin: 0 0 12px; }
+        .cn-row { display: flex; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); cursor: pointer; }
+        .cn-row:last-child { border-bottom: 1px solid var(--border); }
+        .cn-row:hover { background: var(--border); }
+        .cn-row img, .cn-row .ph { width: 44px; height: 44px; object-fit: cover; flex: none; border: 1px solid var(--border); display: block; }
+        .cn-row b { font-family: var(--f-display); font-weight: 400; font-size: 1.15rem; line-height: 1.1; display: block; }
+        .cn-row small { font-family: var(--f-mono); font-size: .66rem; letter-spacing: .05em; color: var(--muted); display: block; margin-top: 2px; }
+        .cn-song.mine b::before { content: "● "; font-size: .6rem; vertical-align: middle; }
+        .cn-song.mine { background: var(--border); }
+
+        /* the map */
+        .cn-stage { position: relative; width: 100%; height: calc(100vh - 250px); min-height: 560px; border: 1px solid var(--border);
+                    overflow: hidden; cursor: grab; touch-action: none; user-select: none;
+                    background-image: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px);
+                    background-size: 48px 48px; background-position: -1px -1px; }
+        .cn-stage.pan { cursor: grabbing; }
+        .cn-stage::before { content: ""; position: absolute; inset: 0; background: var(--bg); opacity: .93; pointer-events: none; }
+        .cn-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+        .cn-world.glide { transition: transform .45s ease; }
+        .cn-lines { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
+        .cn-lines line { stroke: var(--border); stroke-width: 1.2; }
+        .cn-lines line.soft { stroke-dasharray: 3 5; }
+        .cn-lines line.on { stroke: var(--text); stroke-width: 1.6; }
+        .cn-lines line.dim { opacity: .35; }
+
+        .cn-n { position: absolute; left: 0; top: 0; display: flex; flex-direction: column; align-items: center; gap: 5px; width: 124px;
+                margin-left: -62px; margin-top: -34px; text-align: center; cursor: pointer; will-change: transform; }
+        .cn-n .im { width: 56px; height: 56px; object-fit: cover; border: 1px solid var(--border); background: var(--bg); display: block; box-sizing: border-box; }
+        .cn-n .ph { display: flex; align-items: center; justify-content: center; font-family: var(--f-display); font-size: 1.5rem; color: var(--muted); }
+        .cn-n.album .im { width: 60px; height: 60px; border-color: var(--text); }
+        .cn-n b { font-family: var(--f-display); font-weight: 400; font-size: 1.02rem; line-height: 1.12; background: var(--bg); padding: 0 3px; display: block; }
+        .cn-n small { font-family: var(--f-mono); font-size: .58rem; letter-spacing: .06em; color: var(--muted); background: var(--bg); padding: 0 3px; display: block; margin-top: -3px; }
+        .cn-n:hover .im, .cn-n.sel .im { outline: 2px solid var(--text); outline-offset: 1px; }
+        .cn-n.home .im { width: 84px; height: 84px; border-width: 2px; border-color: var(--text); }
+        .cn-n.home b { font-size: 1.3rem; }
+        .cn-n.dim { opacity: .35; }
+        .cn-n.pin .im { border-style: dashed; }
+        .cn-n.cn-lbl { margin-top: -14px; }
+        .cn-n.cn-lbl span.c { font-family: var(--f-mono); font-size: .66rem; letter-spacing: .1em; text-transform: uppercase; background: var(--bg);
+                            border: 1px solid var(--border); padding: 6px 10px; white-space: nowrap; display: block; }
+        .cn-n.cn-lbl.genre span.c { border-style: dashed; color: var(--muted); }
+        .cn-n.cn-lbl:hover span.c, .cn-n.cn-lbl.sel span.c { border-color: var(--text); }
+        .cn-n.busy .im { opacity: .45; }
+
+        .cn-tools { position: absolute; left: 12px; top: 12px; display: flex; gap: 6px; z-index: 3; }
+        .cn-tools button { background: var(--bg); }
+        .cn-info { position: absolute; right: 12px; top: 12px; width: 270px; background: var(--bg); border: 1px solid var(--text); padding: 14px; z-index: 3;
+                   cursor: default; }
+        .cn-info img { width: 100%; height: auto; max-height: 240px; object-fit: cover; border: 1px solid var(--border); display: block; margin: 0 0 10px; }
+        .cn-info h2 { font-family: var(--f-display); font-weight: 400; font-size: 1.5rem; line-height: 1.1; margin: 0 0 4px; }
+        .cn-info p { font-family: var(--f-mono); font-size: .7rem; letter-spacing: .05em; color: var(--muted); margin: 0 0 10px; }
+        .cn-info .row { display: flex; flex-wrap: wrap; gap: 6px; }
+        .cn-info .row a, .cn-info .row button { font-family: var(--f-mono); font-size: .64rem; letter-spacing: .1em; text-transform: uppercase; color: var(--text);
+                                           border: 1px solid var(--border); padding: 6px 9px; text-decoration: none; background: transparent; cursor: pointer; }
+        .cn-info .row a:hover, .cn-info .row button:hover { border-color: var(--text); }
+        .cn-info p a { color: var(--text); text-decoration: underline; text-underline-offset: 2px; white-space: nowrap; }
+        .cn-info { max-height: calc(100% - 24px); overflow-y: auto; }
+        .cn-prev { margin: 12px 0 0; border-top: 1px solid var(--border); }
+        .cn-prev h4, .cn-add h4 { font-family: var(--f-mono); font-size: .6rem; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 400; margin: 10px 0 6px; }
+        .cn-song { display: grid; grid-template-columns: 26px 1fr auto; gap: 8px; align-items: center; padding: 5px 0; border-top: 1px solid var(--border); font-family: var(--f-mono); font-size: .68rem; }
+        .cn-song:first-of-type { border-top: 0; }
+        .cn-song button { width: 26px; height: 26px; padding: 0; font-size: .6rem; line-height: 1; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer; }
+        .cn-song button:disabled { opacity: .3; cursor: default; }
+        .cn-song button.on { background: var(--text); color: var(--bg); }
+        .cn-song b { font-family: var(--f-display); font-weight: 400; font-size: .98rem; line-height: 1.1; display: block; }
+        .cn-song small { color: var(--muted); }
+        .cn-bar { height: 2px; background: var(--border); margin: 2px 0 0; }
+        .cn-bar i { display: block; height: 2px; width: 0; background: var(--text); }
+        .cn-add { margin: 12px 0 0; border-top: 1px solid var(--text); padding-top: 4px; }
+        .cn-add p { font-family: var(--f-mono); font-size: .66rem; color: var(--muted); margin: 6px 0; line-height: 1.5; }
+        .cn-add p.err { color: var(--red); }
+        .cn-add select, .cn-add input[type=text] { width: 100%; box-sizing: border-box; background: transparent; color: var(--text); border: 1px solid var(--border);
+                                                   border-radius: 0; padding: 7px 8px; font-family: var(--f-mono); font-size: .7rem; margin: 0 0 6px; }
+        .cn-add .go { background: var(--text); color: var(--bg); border-color: var(--text); }
+        .cn-info .x { position: absolute; right: 6px; top: 6px; border: 0; padding: 2px 6px; font-size: .9rem; }
+        .cn-notes { margin: 14px 0 0; font-family: var(--f-mono); font-size: .76rem; color: var(--muted); line-height: 1.7; }
+        @media (max-width: 760px) { .cn-info { width: auto; left: 12px; top: auto; bottom: 12px; } .cn-stage { height: 70vh; } }
+    </style>
+    <script src="/static/js/room_transition.js"></script>
+    <link rel="stylesheet" href="/static/css/ui.css">
+</head>
+<body>
+{% include "_gr_nav.html" %}
+
+<main class="cn" id="cn">
+    <div class="cn__head"><h1>Connections</h1><span class="cn__sec">Around a record</span></div>
+
+    <section class="cn-start" id="cn-start" hidden>
+        <p class="cn__msg">Where do you want to start?</p>
+        <div class="cn-start__row">
+            <button class="go" id="cn-now">The song playing now</button>
+            <button class="go" id="cn-liked">One of my liked songs</button>
+            <button id="cn-type">An album I type in</button>
+        </div>
+        <p class="cn__msg" id="cn-startmsg"></p>
+        <div id="cn-likedbox" hidden>
+            <input type="text" id="cn-filter" placeholder="Filter the liked songs below, or search all of Spotify" autocomplete="off">
+            <div id="cn-likedlist"></div>
+            <div class="cn-start__row"><button id="cn-more" hidden>Show more of my liked songs</button><button id="cn-searchall" hidden>Search all of Spotify</button></div>
+        </div>
+        <div class="cn__ask" id="cn-ask" hidden>
+            <div><label for="cn-a">Artist</label><input type="text" id="cn-a" autocomplete="off"></div>
+            <div><label for="cn-b">Album</label><input type="text" id="cn-b" autocomplete="off"></div>
+            <button class="go" id="cn-go">Show connections</button>
+        </div>
+    </section>
+
+    <div class="cn__bar"><span><span id="cn-count"></span> <button id="cn-again" hidden>Start somewhere else</button></span><span id="cn-hint">Click a record or an artist to grow the web and hear it. Drag to move things. Pinch to zoom.</span></div>
+    <p class="cn__msg" id="cn-song" hidden></p>
+    <p class="cn__msg" id="cn-msg"></p>
+
+    <div class="cn-stage" id="cn-stage" hidden>
+        <div class="cn-tools"><button id="cn-fit" title="Fit the whole web on screen">Fit</button><button id="cn-in" title="Zoom in">+</button><button id="cn-out" title="Zoom out">−</button><button id="cn-reset" title="Start again from the first record">Reset</button></div>
+        <div class="cn-world" id="cn-world"><svg class="cn-lines" id="cn-lines"></svg></div>
+        <div class="cn-info" id="cn-info" hidden></div>
+    </div>
+    <div class="cn-notes" id="cn-notes"></div>
+</main>
+
+<script src="/static/js/conn_graph.js"></script>
+<script src="/static/js/room_add.js"></script>
+<script src="/static/js/conn_start.js"></script>
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const fans = n => n == null ? '' : (n >= 1e6 ? (n/1e6).toFixed(1) + 'M' : n >= 1e3 ? (n/1e3).toFixed(1).replace('.0','') + 'k' : String(n)) + ' fans';
+  const say = (t, err) => { $('cn-msg').textContent = t || ''; $('cn-msg').classList.toggle('err', !!err); };
+
+  const stage = $('cn-stage'), world = $('cn-world'), lines = $('cn-lines');
+  let g = ConnGraph.create(), view = { x: 0, y: 0, k: 1 }, home = null, sel = null, els = new Map(), edgeEls = new Map();
+  let alpha = 0, raf = 0, drag = null, startQ = null, web = null;
+
+  // ── the server ─────────────────────────────────────────────────
+  async function fetchWeb(q){
+    const r = await fetch('/api/connections?' + new URLSearchParams(q));
+    let d = {}; try { d = await r.json(); } catch(e){}
+    if (!r.ok) throw new Error(d.error || 'Could not look that up.');
+    return d;
+  }
+
+  // ── nodes and lines on screen ──────────────────────────────────
+  function metaOf(n){
+    if (n.type === 'album') return [n.year, n.kind && n.kind !== 'album' ? n.kind : ''].filter(Boolean).join(' · ');
+    if (n.type === 'artist') return n.role || fans(n.fans);
+    return '';
+  }
+  function makeEl(n){
+    const el = document.createElement('div');
+    const named = n.type === 'label' || n.type === 'genre';
+    el.className = 'cn-n ' + n.type + (named ? ' cn-lbl' : '');
+    el.dataset.key = n.key;
+    el.innerHTML = named ? '<span class="c">' + esc(n.name) + (n.type === 'label' ? ' ↗' : '') + '</span>'
+      : (n.image ? '<img class="im" src="' + esc(n.image) + '" alt="" loading="lazy" draggable="false">' : '<span class="im ph">' + esc((n.name || '?').charAt(0)) + '</span>') +
+        '<b>' + esc(n.name) + '</b>' + (metaOf(n) ? '<small>' + esc(metaOf(n)) + '</small>' : '');
+    world.appendChild(el); els.set(n.key, el);
+    return el;
+  }
+  function sync(){                                      // make the page match the graph (new nodes, new lines)
+    g.nodes.forEach(n => { if (!els.has(n.key)) makeEl(n); });
+    g.edges.forEach(e => {
+      const k = e.a.key + '|' + e.b.key;
+      if (edgeEls.has(k)) return;
+      const ln = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      if (e.a.type === 'label' || e.b.type === 'label' || e.a.type === 'genre' || e.b.type === 'genre') ln.setAttribute('class', 'soft');
+      lines.appendChild(ln); edgeEls.set(k, { ln, e });
+    });
+    els.forEach((el, key) => { const n = g.nodes.get(key); el.classList.toggle('home', key === home); el.classList.toggle('pin', !!n.pinned); });
+    $('cn-count').textContent = [...g.nodes.values()].filter(n => n.type === 'album' || n.type === 'artist').length + ' records and artists · ' + g.edges.length + ' connections';
+  }
+  function paint(){
+    els.forEach((el, key) => { const n = g.nodes.get(key); el.style.transform = 'translate(' + n.x.toFixed(1) + 'px,' + n.y.toFixed(1) + 'px)'; });
+    edgeEls.forEach(({ ln, e }) => { ln.setAttribute('x1', e.a.x.toFixed(1)); ln.setAttribute('y1', e.a.y.toFixed(1)); ln.setAttribute('x2', e.b.x.toFixed(1)); ln.setAttribute('y2', e.b.y.toFixed(1)); });
+  }
+  function setView(glide){
+    world.classList.toggle('glide', !!glide);
+    world.style.transform = 'translate(' + view.x.toFixed(1) + 'px,' + view.y.toFixed(1) + 'px) scale(' + view.k.toFixed(3) + ')';
+  }
+
+  // ── the layout runs until the web is calm ──────────────────────
+  function run(a){ alpha = Math.max(alpha, a); if (!raf) raf = requestAnimationFrame(loop); }
+  function loop(){
+    raf = 0;
+    const energy = ConnGraph.tick(g, alpha);
+    alpha *= 0.985; paint();
+    if (alpha > 0.03 || drag) raf = requestAnimationFrame(loop);
+  }
+  function settle(n){ for (let i = 0; i < n; i++) { ConnGraph.tick(g, Math.max(alpha, .3)); alpha *= .985; } paint(); }
+
+  function fit(glide){
+    const W = stage.clientWidth, H = stage.clientHeight, b = ConnGraph.bounds(g, 10);
+    const k = Math.max(.3, Math.min(1.35, Math.min(W / b.w, H / b.h)));
+    view.k = k; view.x = W / 2 - (b.x + b.w / 2) * k; view.y = H / 2 - (b.y + b.h / 2) * k; setView(glide);
+  }
+  function zoomAt(f, cx, cy){
+    const k = Math.max(.25, Math.min(2.2, view.k * f)), r = k / view.k;
+    view.x = cx - (cx - view.x) * r; view.y = cy - (cy - view.y) * r; view.k = k; setView(false);
+  }
+
+  // ── choosing and growing ───────────────────────────────────────
+  function select(key){
+    if (key !== sel) stopPreview();
+    sel = key;
+    els.forEach((el, k) => el.classList.toggle('sel', k === key));
+    const near = key ? new Set([key, ...g.neighbours(key).map(n => n.key)]) : null;
+    els.forEach((el, k) => el.classList.toggle('dim', !!near && !near.has(k)));
+    edgeEls.forEach(({ ln, e }) => { const on = !!key && (e.a.key === key || e.b.key === key); ln.classList.toggle('on', on); ln.classList.toggle('dim', !!key && !on); });
+    info(key ? g.nodes.get(key) : null);
+  }
+  const room = RoomAdd.create(), adds = new Map(), previews = new Map();
+  const clock = t => { t = Math.round(t || 0); return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); };
+  const addOf = n => { if (!adds.has(n.key)) adds.set(n.key, { state: 'idle' }); return adds.get(n.key); };
+
+  function info(n){
+    const box = $('cn-info');
+    if (!n) { box.hidden = true; return; }
+    const named = n.type === 'label' || n.type === 'genre';
+    const meta = n.type === 'album' ? [n.sub, n.year, n.tracks ? n.tracks + ' songs' : ''].filter(Boolean).join(' · ')
+               : n.type === 'artist' ? [n.role, fans(n.fans), n.albums ? n.albums + ' records' : ''].filter(Boolean).join(' · ')
+               : n.type === 'label' ? 'Label' : 'Genre';
+    const canGrow = (n.type === 'artist' || n.type === 'album') && !n.expanded;
+    const hear = n.type === 'artist' || n.type === 'album';
+    box.innerHTML = '<button class="x" data-a="close" title="Close">×</button>' +
+      (n.image && !named ? '<img src="' + esc(n.image) + '" alt="">' : '') +
+      '<h2>' + esc(n.name) + '</h2><p>' + esc(meta) + '</p><div class="row">' +
+      (canGrow ? '<button data-a="grow">Grow from here</button>' : '') +
+      (n.url ? '<a href="' + esc(n.url) + '" target="_blank" rel="noopener">' + (n.type === 'label' ? 'Discogs' : 'Spotify') + ' ↗</a>' : '') +
+      (n.deezer ? '<a href="' + esc(n.deezer) + '" target="_blank" rel="noopener">Deezer ↗</a>' : '') +
+      '<button data-a="pin">' + (n.pinned ? 'Let it move' : 'Pin') + '</button></div>' +
+      (hear ? '<div class="cn-prev" id="cn-prev"></div>' : '') +
+      (n.type === 'album' ? '<div class="cn-add" id="cn-add"></div>' : '');
+    box.hidden = false;
+    if (hear) loadPreview(n);
+    if (n.type === 'album') renderAdd(n);
+  }
+
+  // ── hear it first: thirty seconds of each song ─────────────────
+  const audio = new Audio(); audio.preload = 'none';
+  let playing = null;                                   // { key, i }
+  function stopPreview(){
+    audio.pause(); playing = null;
+    document.querySelectorAll('.cn-song button.on').forEach(b => { b.classList.remove('on'); b.textContent = '▶'; });
+    document.querySelectorAll('.cn-bar i').forEach(i => { i.style.width = '0'; });
+  }
+  audio.addEventListener('ended', stopPreview);
+  audio.addEventListener('timeupdate', () => {
+    if (!playing || !audio.duration) return;
+    const i = document.querySelector('.cn-song[data-i="' + playing.i + '"] .cn-bar i');
+    if (i) i.style.width = (audio.currentTime / audio.duration * 100) + '%';
+  });
+  window.addEventListener('pagehide', stopPreview);
+
+  const isMine = (n, t) => !!(web && web.song && n.key === home && RoomAdd.fold(t.title) === RoomAdd.fold(web.song.title));
+  async function loadPreview(n){
+    const box = $('cn-prev'); if (!box) return;
+    if (!previews.has(n.key)) {
+      box.innerHTML = '<h4>Listen</h4><p class="cn__msg">Finding songs…</p>';
+      let d;
+      try { const r = await fetch('/api/connections/preview?' + new URLSearchParams({ kind: n.type, id: n.id })); d = await r.json(); if (!r.ok) d = { items: [], note: d.error || '' }; }
+      catch (e) { d = { items: [], note: 'Could not load the songs.' }; }
+      previews.set(n.key, d);
+    }
+    if (sel !== n.key) return;
+    const d = previews.get(n.key), b2 = $('cn-prev'); if (!b2) return;
+    const items = d.items || [];
+    b2.innerHTML = '<h4>Listen · 30 seconds each</h4>' + (items.length ? items.map((t, i) =>
+      '<div class="cn-song' + (isMine(n, t) ? ' mine' : '') + '" data-i="' + i + '"><button data-a="play" data-i="' + i + '"' + (t.preview ? '' : ' disabled title="No preview for this one"') + '>▶</button>' +
+      '<span><b>' + esc(t.title) + '</b><small>' + esc(t.sub || '') + '</small><div class="cn-bar"><i></i></div></span><small>' + (t.duration_sec ? clock(t.duration_sec) : '') + '</small></div>').join('')
+      : '<p class="cn__msg">' + esc(d.note || 'Nothing to hear.') + '</p>') + (d.note && items.length ? '<p class="cn__msg">' + esc(d.note) + '</p>' : '');
+    if (playing && playing.key === n.key) { const b = b2.querySelector('button[data-i="' + playing.i + '"]'); if (b) { b.classList.add('on'); b.textContent = '❚❚'; } }
+  }
+  async function togglePlay(n, i){
+    const pv = previews.get(n.key), t = pv && pv.items && pv.items[i]; if (!t || !t.preview) return;
+    if (playing && playing.key === n.key && playing.i === i) { stopPreview(); return; }
+    stopPreview();
+    fetch('/api/seinnteoir/pause', { method: 'POST' }).catch(() => {});        // never layer on the app's own player
+    audio.src = t.preview; playing = { key: n.key, i };
+    const b = document.querySelector('.cn-song[data-i="' + i + '"] button'); if (b) { b.classList.add('on'); b.textContent = '❚❚'; }
+    try { await audio.play(); } catch (e) { stopPreview(); say('The preview would not play.', true); }
+  }
+
+  // ── decide: add the album to My Room ───────────────────────────
+  function renderAdd(n){
+    const box = $('cn-add'); if (!box) return;
+    const a = addOf(n);
+    const link = '<a href="https://open.spotify.com/search/' + encodeURIComponent((n.sub + ' ' + n.name).trim()) + '/albums" target="_blank" rel="noopener">search Spotify</a>';
+    if (a.state === 'idle') box.innerHTML = '<div class="row"><button class="go" data-a="addstart">Add to My Room</button></div>';
+    else if (a.state === 'finding') box.innerHTML = '<p>Finding it on Spotify…</p>';
+    else if (a.state === 'error') box.innerHTML = '<p class="err">' + esc(a.msg) + '</p><p>' + (a.notConnected ? '<a href="/spotify">Connect Spotify</a>' : link) + '</p><div class="row"><button data-a="addstart">Try again</button></div>';
+    else if (a.state === 'confirm') {
+      const m = a.match;
+      box.innerHTML = '<h4>Add this to My Room?</h4><p><span style="font-family:var(--f-display);font-size:1rem;color:var(--text)">' + esc(m.title) + '</span><br>' +
+        esc([m.subtitle, m.year, m.tracks ? m.tracks + ' songs' : ''].filter(Boolean).join(' · ')) +
+        (a.whole ? '<br>Spotify would not list the songs, so it goes in as one record.' : '<br>' + a.items.length + ' songs.') + '</p>' +
+        '<select id="cn-g"><option value="">A new grúpa…</option>' + a.grupas.map(g => '<option value="' + g.id + '"' + (g.id === a.pick ? ' selected' : '') + '>' + esc(g.name) + (g.has ? ' (already has it)' : '') + '</option>').join('') + '</select>' +
+        '<input type="text" id="cn-gn" value="' + esc(m.title) + '"' + (a.pick ? ' hidden' : '') + '>' +
+        '<div class="row"><button class="go" data-a="addgo">Add</button><button data-a="addno">Not this one</button></div>';
+      const s2 = $('cn-g'); if (s2) s2.onchange = () => { $('cn-gn').hidden = !!s2.value; };
+    }
+    else if (a.state === 'adding') box.innerHTML = '<p>Adding…</p>';
+    else if (a.state === 'done') box.innerHTML = '<p>' + (a.added ? 'Added ' + a.added + (a.added === 1 ? ' song' : ' songs') + ' to My Room.' : 'Already in My Room.') + ' <a href="/room?grupa=' + a.grupaId + '">Open it →</a></p>';
+  }
+  async function addStart(n){
+    const a = addOf(n); a.state = 'finding'; renderAdd(n);
+    const m = await room.match(n.sub, n.name);
+    if (m.error) { Object.assign(a, { state: 'error', msg: m.error, notConnected: !!m.notConnected }); if (sel === n.key) renderAdd(n); return; }
+    const sg = await room.songs(m.album);
+    const list = await room.grupas(sg.items[0] && sg.items[0].url);
+    const has = list.find(x => x.has);
+    Object.assign(a, { state: 'confirm', match: m.album, items: sg.items, whole: sg.whole, grupas: list, pick: has ? has.id : 0 });
+    if (sel === n.key) renderAdd(n);
+  }
+  async function addGo(n){
+    const a = addOf(n), gs = $('cn-g'), gid = gs ? +gs.value : 0, name = ($('cn-gn') || {}).value || a.match.title;
+    a.state = 'adding'; renderAdd(n);
+    const r = await room.add({ items: a.items, grupaId: gid || 0, name, note: 'From Connections' });
+    if (r.error) Object.assign(a, { state: 'error', msg: r.error }); else Object.assign(a, { state: 'done', grupaId: r.grupaId, added: r.added });
+    if (sel === n.key) renderAdd(n);
+  }
+
+  $('cn-info').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    const n = g.nodes.get(sel), act = b.dataset.a;
+    if (act === 'close') select(null);
+    else if (act === 'grow' && n) grow(n);
+    else if (act === 'pin' && n) { n.pinned = !n.pinned; sync(); info(n); run(.3); }
+    else if (act === 'play' && n) togglePlay(n, +b.dataset.i);
+    else if (act === 'addstart' && n) addStart(n);
+    else if (act === 'addgo' && n) addGo(n);
+    else if (act === 'addno' && n) { adds.set(n.key, { state: 'idle' }); renderAdd(n); }
+  });
+
+  async function grow(n){
+    if (!n || n.expanded || (n.type !== 'artist' && n.type !== 'album')) return;
+    const el = els.get(n.key); el.classList.add('busy'); say('Looking around ' + n.name + '…');
+    try {
+      const web = await fetchWeb({ kind: n.type, id: n.id });
+      const res = g.addWeb(web);
+      sync(); run(1); say('');
+      if (!res.grew) say(n.name + ' has nothing more to add.');
+      (web.notes || []).length && ($('cn-notes').textContent = web.notes.join(' '));
+      if (sel === n.key) info(n);
+    } catch (err) { say(err.message, true); }
+    el.classList.remove('busy');
+  }
+
+  // ── pointer: pan the map, drag a node, click to choose + grow ──
+  stage.addEventListener('pointerdown', e => {
+    if (e.target.closest('.cn-info, .cn-tools')) return;
+    const nel = e.target.closest('.cn-n'), r = stage.getBoundingClientRect();
+    drag = { sx: e.clientX, sy: e.clientY, moved: false, vx: view.x, vy: view.y, node: nel ? g.nodes.get(nel.dataset.key) : null, r };
+    if (drag.node) { drag.nx = drag.node.x; drag.ny = drag.node.y; } else stage.classList.add('pan');
+    stage.setPointerCapture(e.pointerId);
+  });
+  stage.addEventListener('pointermove', e => {
+    if (!drag) return;
+    const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+    if (!drag.moved && Math.hypot(dx, dy) > 4) drag.moved = true;
+    if (!drag.moved) return;
+    if (drag.node) { drag.node.pinned = true; drag.node.x = drag.nx + dx / view.k; drag.node.y = drag.ny + dy / view.k; paint(); run(.25); }
+    else { view.x = drag.vx + dx; view.y = drag.vy + dy; setView(false); }
+  });
+  const end = e => {
+    if (!drag) return; const d = drag; drag = null; stage.classList.remove('pan');
+    if (d.node && !d.moved) { select(d.node.key); if (d.node.type === 'label' && d.node.url) window.open(d.node.url, '_blank', 'noopener'); else grow(d.node); }
+    else if (d.node && d.moved) { sync(); if (sel === d.node.key) info(d.node); }
+    else if (!d.moved) select(null);
+  };
+  stage.addEventListener('pointerup', end); stage.addEventListener('pointercancel', end);
+  // Zoom is a pinch and nothing else; an ordinary scroll is left alone so the page still scrolls.
+  //   trackpad pinch in Chrome/Firefox arrives as a wheel with ctrlKey; in Safari and the app as gesture events;
+  //   on a touch screen it is two fingers.
+  stage.addEventListener('wheel', e => {
+    if (!e.ctrlKey) return;
+    e.preventDefault(); const r = stage.getBoundingClientRect();
+    zoomAt(Math.exp(-e.deltaY * 0.012), e.clientX - r.left, e.clientY - r.top);
+  }, { passive: false });
+  let gestureScale = 1;
+  stage.addEventListener('gesturestart', e => { e.preventDefault(); gestureScale = 1; });
+  stage.addEventListener('gesturechange', e => { e.preventDefault(); const r = stage.getBoundingClientRect(); const f = e.scale / gestureScale; gestureScale = e.scale; zoomAt(f, e.clientX - r.left, e.clientY - r.top); });
+  stage.addEventListener('gestureend', e => e.preventDefault());
+  const fingers = new Map(); let pinch = null;
+  stage.addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'touch') return;
+    fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (fingers.size === 2) { const [a, b] = [...fingers.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) }; drag = null; stage.classList.remove('pan'); }
+  });
+  stage.addEventListener('pointermove', e => {
+    if (e.pointerType !== 'touch' || !fingers.has(e.pointerId)) return;
+    fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && fingers.size === 2) {
+      const [a, b] = [...fingers.values()], d = Math.hypot(a.x - b.x, a.y - b.y), r = stage.getBoundingClientRect();
+      zoomAt(d / pinch.d, (a.x + b.x) / 2 - r.left, (a.y + b.y) / 2 - r.top); pinch.d = d;
+    }
+  });
+  const lift = e => { fingers.delete(e.pointerId); if (fingers.size < 2) pinch = null; };
+  stage.addEventListener('pointerup', lift); stage.addEventListener('pointercancel', lift);
+
+  $('cn-fit').onclick = () => fit(true);
+  $('cn-in').onclick = () => zoomAt(1.25, stage.clientWidth / 2, stage.clientHeight / 2);
+  $('cn-out').onclick = () => zoomAt(1 / 1.25, stage.clientWidth / 2, stage.clientHeight / 2);
+  $('cn-reset').onclick = () => start(startQ);
+
+  // ── start ──────────────────────────────────────────────────────
+  async function start(q){
+    startQ = q; say('Looking around…'); $('cn-notes').textContent = '';
+    try {
+      web = await fetchWeb(q);
+      g = ConnGraph.create(); els.forEach(el => el.remove()); els.clear(); edgeEls.forEach(x => x.ln.remove()); edgeEls.clear(); sel = null; info(null);
+      const res = g.addWeb(web); home = res.center;
+      $('cn-start').hidden = true; stage.hidden = false; $('cn-again').hidden = false; say('');
+      $('cn-song').hidden = !web.song;
+      if (web.song) $('cn-song').textContent = 'Started from the song “' + web.song.title + '”' + (web.song.artist ? ' by ' + web.song.artist : '') + '. It is marked in the song list.';
+      history.replaceState(null, '', '?' + new URLSearchParams(q));
+      document.title = web.center.name + ' — Connections — Music Room';
+      sync(); alpha = 1; settle(220); fit(false); run(.2);
+      (web.notes || []).length && ($('cn-notes').textContent = web.notes.join(' '));
+    } catch (err) { say(err.message, true); showStart(); }
+  }
+
+  // ── the start screen: what is playing, a liked song, or an album you type ──
+  function showStart(){
+    stage.hidden = true; $('cn-start').hidden = false; $('cn-again').hidden = true; $('cn-song').hidden = true; $('cn-count').textContent = '';
+    stopPreview(); info(null); history.replaceState(null, '', location.pathname);
+  }
+  const startMsg = (t, err) => { $('cn-startmsg').textContent = t || ''; $('cn-startmsg').classList.toggle('err', !!err); };
+  const startFromSong = song => { startMsg(''); start(Object.fromEntries(ConnStart.query(song).entries())); };
+
+  $('cn-again').onclick = showStart;
+  $('cn-type').onclick = () => { $('cn-ask').hidden = false; $('cn-likedbox').hidden = true; $('cn-a').focus(); };
+  $('cn-now').onclick = async () => {
+    startMsg('Asking the player…');
+    let st = null; try { st = await (await fetch('/api/seinnteoir/state')).json(); } catch (e) {}
+    const song = ConnStart.nowPlaying(st);
+    if (!song) { startMsg('Nothing is playing right now. Play a song, or pick one from your liked songs.'); return; }
+    startMsg((song.playing ? 'Playing on ' : 'Last played on ') + song.where + ': ' + song.title + (song.artist ? ' by ' + song.artist : '') + '. Looking around…');
+    startFromSong(song);
+  };
+
+  // liked songs: fifty at a time (the app's own saved-songs list), filtered as you type; or search all of Spotify
+  let liked = [], likedMore = true, likedBusy = false, hits = null;
+  const rowHtml = (x, i) => '<div class="cn-row" data-i="' + i + '">' + (x.image ? '<img src="' + esc(x.image) + '" alt="" loading="lazy">' : '<span class="ph"></span>') +
+    '<div><b>' + esc(x.title) + '</b><small>' + esc([x.artist, x.album].filter(Boolean).join(' · ')) + '</small></div></div>';
+  function drawLiked(){
+    const f = $('cn-filter').value.trim().toLowerCase();
+    const list = hits || (f ? liked.filter(x => (x.title + ' ' + x.artist + ' ' + x.album).toLowerCase().includes(f)) : liked);
+    $('cn-likedlist').innerHTML = list.length ? list.map(rowHtml).join('') : '<p class="cn__msg">' + (f ? 'None of the ' + liked.length + ' liked songs loaded so far match.' : 'No liked songs.') + '</p>';
+    $('cn-likedlist').dataset.src = hits ? 'hits' : 'liked'; $('cn-likedlist')._list = list;
+    $('cn-more').hidden = !!hits || !likedMore || !!f; $('cn-searchall').hidden = !f || f.length < 2;
+  }
+  async function loadLiked(){
+    if (likedBusy) return; likedBusy = true; startMsg('Loading your liked songs…');
+    try {
+      const r = await fetch('/api/spotify/saved-tracks?limit=50&offset=' + liked.length), d = await r.json();
+      if (!r.ok) { startMsg(r.status === 401 ? 'Spotify is not connected. Connect it in Tools → Spotify.' : (d.error || 'Spotify would not list them just now.'), true); return; }
+      liked = liked.concat((d.items || []).map(ConnStart.fromLiked).filter(Boolean)); likedMore = !!d.has_more;
+      startMsg(liked.length + ' of ' + (d.total || liked.length) + ' liked songs loaded.'); drawLiked();
+    } catch (e) { startMsg('Could not reach Spotify.', true); } finally { likedBusy = false; }
+  }
+  $('cn-liked').onclick = () => { $('cn-likedbox').hidden = false; $('cn-ask').hidden = true; hits = null; if (!liked.length) loadLiked(); else drawLiked(); $('cn-filter').focus(); };
+  $('cn-more').onclick = loadLiked;
+  $('cn-filter').addEventListener('input', () => { hits = null; drawLiked(); });
+  $('cn-searchall').onclick = async () => {
+    const q = $('cn-filter').value.trim(); startMsg('Searching Spotify…');
+    try {
+      const d = await (await fetch('/api/spotify/search?q=' + encodeURIComponent(q))).json();
+      if (d.connected === false) { startMsg('Spotify is not connected. Connect it in Tools → Spotify.', true); return; }
+      hits = (d.results || []).map(ConnStart.fromSearch).filter(Boolean); startMsg(hits.length ? 'Songs on Spotify for “' + q + '”:' : 'Nothing found on Spotify for “' + q + '”.'); drawLiked();
+    } catch (e) { startMsg('Could not reach Spotify.', true); }
+  };
+  $('cn-likedlist').addEventListener('click', e => {
+    const row = e.target.closest('.cn-row'); if (!row) return;
+    const song = $('cn-likedlist')._list[+row.dataset.i]; if (song) startFromSong(song);
+  });
+  const p = new URLSearchParams(location.search);
+  if (p.get('id') || (p.get('artist') && (p.get('album') || p.get('title'))) || p.get('name')) start(Object.fromEntries(p.entries()));
+  else showStart();
+  $('cn-go').onclick = () => { const a = $('cn-a').value.trim(), b = $('cn-b').value.trim(); if (a && b) start({ kind: 'album', artist: a, album: b }); };
+  let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => g.nodes.size && fit(false), 150); });
+})();
+</script>
+<script src="/static/js/gr_nav.js"></script>
+<script src="/static/js/theme.js"></script>
+<script src="/static/js/seinnteoir.js"></script>
+</body>
+</html>
