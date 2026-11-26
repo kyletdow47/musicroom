@@ -62,6 +62,25 @@ chk(c.get("/api/room/canvas/777").get_json()["links"] == [], "a wall that was ne
 with app.app.app_context():
     app.set_setting("room_canvas:8", json.dumps({"v": 1, "blocks": blocks}))
 chk(c.get("/api/room/canvas/8").get_json()["links"] == [] and len(c.get("/api/room/canvas/8").get_json()["blocks"]) == 3, "a wall saved before lines existed loads fine")
+# archive numbers are never reused
+nn = wl.next_number
+chk(nn(None, []) == 0 and nn(None, B("a")) == 0 and nn(5, []) == 5, "no numbers yet is 0; a stored number is kept")
+chk(nn(3, [{"id": "a", "n": 9}]) == 9 and nn(12, [{"id": "a", "n": 9}]) == 12, "the larger of what was stored and what is on the blocks")
+chk(nn("x", None) == 0 and nn(True, []) == 0 and nn(-4, []) == 0 and nn(10**12, []) == 10**9 and nn(2.7, []) == 2, "junk, negatives, booleans and huge numbers are tamed")
+chk(nn(0, [{"n": True}, {"n": -3}, {"n": "7"}, {"n": 1.5}, None, 5, {"id": "x"}, {"n": 3}]) == 3, "only whole positive numbers on blocks count")
+nb = [{"id": "k1", "type": "text", "x": 0, "y": 0, "w": 9, "h": 9, "z": 1, "n": 4, "data": {}}, {"id": "k2", "type": "text", "x": 0, "y": 0, "w": 9, "h": 9, "z": 2, "n": 9, "data": {}}]
+r = c.post("/api/room/canvas/5", json={"v": 1, "blocks": nb, "links": [], "next": 9})
+chk(r.get_json()["next"] == 9 and c.get("/api/room/canvas/5").get_json()["next"] == 9, "the wall stores the highest number given out")
+c.post("/api/room/canvas/5", json={"v": 1, "blocks": nb[:1], "links": [], "next": 9})
+chk(c.get("/api/room/canvas/5").get_json()["next"] == 9, "deleting the block that had 9 does not lower it: 9 is never given out again")
+c.post("/api/room/canvas/5", json={"v": 1, "blocks": nb[:1], "links": [], "next": 2})
+chk(c.get("/api/room/canvas/5").get_json()["next"] == 9, "a caller that sends a smaller number cannot lower it")
+c.post("/api/room/canvas/5", json={"v": 1, "blocks": nb[:1], "links": []})
+chk(c.get("/api/room/canvas/5").get_json()["next"] == 9, "a save that does not mention it (Explore's 'save this moment') leaves it alone")
+c.post("/api/room/canvas/5", json={"v": 1, "blocks": nb[:1], "links": [], "next": "evil"})
+chk(c.get("/api/room/canvas/5").get_json()["next"] == 9, "junk for it is ignored")
+chk(c.get("/api/room/canvas/4242").get_json()["next"] == 0, "a new wall starts at 0")
+
 print("")
 print("  ALL PASS" if not fails else f"  {len(fails)} FAILURE(S): {fails}")
 sys.exit(1 if fails else 0)

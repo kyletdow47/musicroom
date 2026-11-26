@@ -314,7 +314,7 @@ if node:
     const src = fs.readFileSync(process.argv[1], 'utf8');
     out.src = { dot: src.includes('class="rc-dot"'), linkBtn: src.includes('data-act="link"'), esc: src.includes("cancelLinking(); closeSheet(); select(null); selectLink(null);"),
                 del: src.includes("selLink && !e.target.matches('input, textarea, [contenteditable]')) { e.preventDefault(); removeLink(selLink)"), noPanOnLine: src.includes("e.target.closest('.rc-links g')"),
-                saves: src.includes('JSON.stringify({ v: 1, blocks, links })'), dropsOnRemove: src.includes('links = LinkOps.dropFor(links, id)'), screenSpace: src.includes('const centreScreen = b => toScreen(cam') };
+                saves: src.includes('JSON.stringify({ v: 1, blocks, links, next: counter })'), dropsOnRemove: src.includes('links = LinkOps.dropFor(links, id)'), screenSpace: src.includes('const centreScreen = b => toScreen(cam') };
     console.log(JSON.stringify(out));
     """
     r = subprocess.run([node, "-e", LINK_JS, CANVAS], capture_output=True, text=True, timeout=60)
@@ -334,6 +334,51 @@ if node:
         chk(sr["dot"] and sr["linkBtn"], "every block has the drag-dot and a Link button")
         chk(sr["esc"] and sr["del"] and sr["noPanOnLine"], "Esc cancels, Delete removes a selected line, and a click on a line is not swallowed by panning")
         chk(sr["saves"] and sr["dropsOnRemove"] and sr["screenSpace"], "lines are saved with the blocks, go with a deleted block, and are drawn in screen space so they meet blocks on every layer")
+
+# ── the look: numbered archive captions, soft far layers, brackets, ring, glide ──
+if node:
+    LOOK_JS = r"""
+    const fs = require('fs'), vm = require('vm');
+    const win = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), { window: win, URL, console });
+    const W = win.MRRoomCanvas, out = {};
+    out.album = W.nodeHtml({ kind: 'album', name: 'KOSMOBOTANIKA', year: '2025', sub: 'ETNOBOTANIKA', image: 'https://cdn.dzcdn.net/a.jpg', grown: true }, 12);
+    out.noNumber = W.nodeHtml({ kind: 'artist', name: 'Photay', fans: 3000, grown: true });
+    out.zero = W.nodeHtml({ kind: 'artist', name: 'x', grown: true }, 0);
+    out.big = W.nodeHtml({ kind: 'artist', name: 'x', grown: true }, 1234);
+    out.label = W.nodeHtml({ kind: 'label', name: 'Warp' }, 5);
+    out.genre = W.nodeHtml({ kind: 'genre', name: 'Electro' }, 6);
+    out.hostile = W.nodeHtml({ kind: 'album', name: '<img src=x onerror=alert(1)>"\'', sub: '<b>', year: '2025', image: 'javascript:alert(1)' }, 3);
+    out.more = [W.nodeHtml({ kind: 'album', name: 'a', grown: false }, 1).includes('rc-node__more'), W.nodeHtml({ kind: 'album', name: 'a', grown: true }, 1).includes('rc-node__more')];
+    out.empty = W.nodeHtml({}, 2);
+    const src = fs.readFileSync(process.argv[1], 'utf8');
+    out.src = { blur: src.includes("el.style.filter = blur ? `blur(${blur}px)` : ''") && src.includes('cam.depth && d < 0'), numbers: src.includes('function numberAll()') && src.includes('b.n = ++counter') && src.includes('next: counter'),
+      idx: src.includes('class="rc-idx"') && src.includes("b.type === 'node' ? '' : numText(b.n)"), sigN: src.includes("b.type + '|' + b.n + '|'"), ring: src.includes("view.classList.add('ringed')") && src.includes("e.target.closest('.rc-block, .rc-links g')"),
+      glide: src.includes('function glideStep()') && src.includes('glide.vx *= 0.9') && src.includes('if (reduced) { cam.x -= dx; cam.y -= dy; applyCam(); return; }'), stops: src.includes('stopGlide();') };
+    console.log(JSON.stringify(out));
+    """
+    r = subprocess.run([node, "-e", LOOK_JS, CANVAS], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        chk(False, "the look runs under node: " + (r.stderr or "")[:400])
+    else:
+        o = json.loads(r.stdout)
+        chk('<span class="rc-node__cap" title="KOSMOBOTANIKA"><i>012.</i>KOSMOBOTANIKA</span>' in o["album"], "a music node has a small numbered caption above its picture, like an archive plate")
+        chk(o["album"].index("rc-node__cap") < o["album"].index("rc-node__im") < o["album"].index("rc-node__m"), "caption above, picture, then a muted line below")
+        chk("<i>" not in o["noNumber"] and "<i>" not in o["zero"], "no number yet (or 0) means no number is shown")
+        chk("<i>1234.</i>" in o["big"], "numbers pad to three figures and go past it")
+        chk("<i>005.</i>Warp ↗" in o["label"] and "<i>006.</i>Electro" in o["genre"] and "rc-node--genre" in o["genre"], "labels and genres are numbered tags")
+        h = o["hostile"]
+        chk("<img" not in h and "<b>" not in h and "&lt;img" in h and "javascript:" not in h and "onerror=alert(1)>" not in h, "names cannot inject markup, and a javascript: picture is not drawn")
+        chk(o["more"] == [True, False] and "(untitled)" in o["empty"], "the grow marker shows only until it has grown; a nameless node is called (untitled)")
+        sr = o["src"]
+        chk(sr["blur"] and sr["idx"] and sr["sigN"], "far layers blur; every other block shows its number; a changed number redraws it")
+        chk(sr["numbers"], "numbers come from a counter the server keeps, so a deleted number is never reused")
+        chk(sr["ring"] and sr["glide"] and sr["stops"], "a ring follows the pointer over bare canvas; a drag glides on and a wheel is eased (and neither with reduced motion)")
+css = open(os.path.join(PROJ, "static", "css", "room_canvas.css"), encoding="utf-8").read()
+lk = css[css.index("/* ── the look: an archive on an open ground"):]
+chk("background-image:none" in lk and ".rc-block--text, .rc-block--quote, .rc-block--image, .rc-block--node{ background:transparent; border-color:transparent; box-shadow:none; }" in lk, "words, quotes, pictures and music have no box and the ground has no dots")
+chk(".rc-block:hover, .rc-block.sel, .rc-block.live{ filter:none !important; opacity:1 !important; }" in lk, "pointing at or selecting a soft far thing brings it into focus")
+chk('content:"[ "' in lk and "prefers-reduced-motion" in lk and ".rc-view.ringed{ cursor:none; }" in lk, "bracketed controls, a hidden system cursor over the canvas, and reduced motion respected")
+chk(not re.search(r"#[0-9a-fA-F]{3,8}\b", lk), "the look uses theme tokens only, no hex")
 
 shutil.rmtree(TMP, ignore_errors=True)
 print(f"\n{'ALL PASSED' if not fails else str(len(fails)) + ' FAILED'}")

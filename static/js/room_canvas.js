@@ -71,13 +71,15 @@ window.MRRoomCanvas = (function () {
   // A music node's inside: an album or artist (a picture and a name), or a label or genre (a small tag). Pure, and escaped.
   // d = { kind: 'album'|'artist'|'label'|'genre', name, sub, image, year, fans, role, home, grown }
   const fansText = n => (n == null ? '' : (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1).replace('.0', '') + 'k' : String(n)) + ' fans');
-  function nodeHtml(d) {
+  const numText = n => (n > 0 ? String(n).padStart(3, '0') : '');
+  function nodeHtml(d, n) {
     d = d || {};
-    const name = String(d.name || '').trim() || '(untitled)';
-    if (d.kind === 'label' || d.kind === 'genre') return `<div class="rc-node rc-node--tag rc-node--${d.kind === 'genre' ? 'genre' : 'label'}"><span class="rc-node__tag">${esc(name)}${d.kind === 'label' ? ' ↗' : ''}</span></div>`;
+    const name = String(d.name || '').trim() || '(untitled)', num = numText(n);
+    const cap = `<span class="rc-node__cap" title="${esc(name)}">${num ? `<i>${num}.</i>` : ''}${esc(name)}${d.kind === 'label' ? ' ↗' : ''}</span>`;
+    if (d.kind === 'label' || d.kind === 'genre') return `<div class="rc-node rc-node--tag rc-node--${d.kind === 'genre' ? 'genre' : 'label'}"><span class="rc-node__tag" title="${esc(name)}">${num ? `<i>${num}.</i>` : ''}${esc(name)}${d.kind === 'label' ? ' ↗' : ''}</span></div>`;
     const meta = d.kind === 'album' ? [d.year, d.sub].filter(Boolean).join(' · ') : (d.role || fansText(d.fans));
     const img = /^https:\/\//.test(d.image || '') ? `<img class="rc-node__im" src="${esc(d.image)}" alt="" draggable="false" loading="lazy">` : `<span class="rc-node__im rc-node__ph">${esc(name.charAt(0))}</span>`;
-    return `<div class="rc-node rc-node--${d.kind === 'album' ? 'album' : 'artist'}${d.home ? ' rc-node--home' : ''}">${img}<b class="rc-node__n">${esc(name)}</b>${meta ? `<small class="rc-node__m">${esc(meta)}</small>` : ''}${d.grown ? '' : '<i class="rc-node__more" title="Click to grow its neighbours">+</i>'}</div>`;
+    return `<div class="rc-node rc-node--${d.kind === 'album' ? 'album' : 'artist'}${d.home ? ' rc-node--home' : ''}">${cap}${img}${meta ? `<small class="rc-node__m">${esc(meta)}</small>` : ''}${d.grown ? '' : '<i class="rc-node__more" title="Click to grow its neighbours">+</i>'}</div>`;
   }
 
   // A kept web's inside, as an SVG drawn from the picture the page took (who sits where). It scales with the
@@ -267,6 +269,7 @@ window.MRRoomCanvas = (function () {
     host.innerHTML = `
       <div class="rc-view" id="rc-view"><svg class="rc-links" id="rc-links"></svg><div class="rc-stage" id="rc-stage"></div></div>
       <div class="rc-linkbox" id="rc-linkbox"></div>
+      <div class="rc-ring" id="rc-ring"></div>
       <div class="rc-hud" id="rc-hud">
         <button data-hud="fit" title="Fit everything on screen">Fit</button><button data-hud="in" title="Zoom in">+</button><button data-hud="out" title="Zoom out">−</button>
         <button data-hud="depth" id="rc-depth" title="Depth: blocks sit on layers, and the view looks around as you move">3D</button>
@@ -288,6 +291,7 @@ window.MRRoomCanvas = (function () {
     const camKey = 'rc_cam_' + placeId, depthKey = 'rc_depth';
     let depthOn = true; try { depthOn = localStorage.getItem(depthKey) !== '0'; } catch (_) {}
     const cam = { x: 0, y: 0, k: 1, ox: 0, oy: 0, depth: depthOn };
+    const glide = { vx: 0, vy: 0, raf: 0 };                               // momentum: a drag keeps going a little after you let go; a wheel is eased
     let rankOf = {}, lookTo = null, lookRaf = 0, camSaveT = null, camSet = false;
     const viewSize = () => { const r = view.getBoundingClientRect(); return { W: r.width || innerWidth, H: r.height || innerHeight, l: r.left, t: r.top }; };
     function applyCam(glide) {
@@ -302,8 +306,15 @@ window.MRRoomCanvas = (function () {
       drawLinks();
       clearTimeout(camSaveT); camSaveT = setTimeout(() => { try { localStorage.setItem(camKey, JSON.stringify({ x: cam.x, y: cam.y, k: cam.k })); } catch (_) {} }, 400);
     }
+    function glideStep() {
+      glide.raf = 0;
+      if (Math.abs(glide.vx) < 0.08 && Math.abs(glide.vy) < 0.08) { glide.vx = glide.vy = 0; return; }
+      cam.x += glide.vx; cam.y += glide.vy; glide.vx *= 0.9; glide.vy *= 0.9; applyCam(); glide.raf = requestAnimationFrame(glideStep);
+    }
+    const kick = () => { if (!glide.raf) glide.raf = requestAnimationFrame(glideStep); };
+    const stopGlide = () => { glide.vx = glide.vy = 0; };
     function centreOrigin() { const v = viewSize(); cam.ox = v.W / 2; cam.oy = v.H / 2; lookTo = null; }
-    function fitNow(glide) { const v = viewSize(); Object.assign(cam, fitCam(blocks, v.W, v.H, cam)); applyCam(glide); }
+    function fitNow(smooth) { stopGlide(); const v = viewSize(); Object.assign(cam, fitCam(blocks, v.W, v.H, cam)); applyCam(smooth); }
     function restoreCam() {
       const v = viewSize(); centreOrigin();
       let saved = null; try { saved = JSON.parse(localStorage.getItem(camKey) || 'null'); } catch (_) {}
@@ -367,13 +378,14 @@ window.MRRoomCanvas = (function () {
         const d = await (await fetch(`/api/room/canvas/${placeId}`)).json();
         blocks = Array.isArray(d.blocks) ? d.blocks : [];
         links = Array.isArray(d.links) ? d.links.filter(l => l && typeof l.a === 'string' && typeof l.b === 'string') : [];
+        counter = Math.max(counter, d.next | 0);
       } catch (_) { blocks = []; links = []; }
-      loaded = true; renderAll(); if (!camSet) restoreCam();
+      loaded = true; const numbered = numberAll(); renderAll(); if (!camSet) restoreCam(); if (numbered && blocks.length) dirty();
     }
     function dirty() { status.textContent = '…'; clearTimeout(saveT); saveT = setTimeout(save, 600); }
     async function save() {
       try {
-        const r = await fetch(`/api/room/canvas/${placeId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ v: 1, blocks, links }) });
+        const r = await fetch(`/api/room/canvas/${placeId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ v: 1, blocks, links, next: counter }) });
         if (!r.ok) throw new Error('save failed');
         status.textContent = 'saved'; setTimeout(() => { if (status.textContent === 'saved') status.textContent = ''; }, 1400);
       } catch (_) { status.textContent = 'not saved'; }
@@ -408,8 +420,17 @@ window.MRRoomCanvas = (function () {
       fire('select', id ? byId(id) : null);
     }
 
+    // ── numbers: each block gets the next one, once, and keeps it (like an archive's index) ──
+    let counter = 0;                                                       // the highest number ever given out on this wall (the server keeps it too)
+    function numberAll() {
+      blocks.forEach(b => { if (b.n > counter) counter = b.n | 0; });
+      let any = false; blocks.forEach(b => { if (!(b.n > 0)) { b.n = ++counter; any = true; } });
+      return any;
+    }
+
     // ── render ──
     function renderAll() {
+      numberAll();
       rankOf = {}; blocks.slice().sort((a, b) => a.z - b.z).forEach((b, i) => { rankOf[b.id] = i; });
       const keep = new Set();
       blocks.forEach(b => { keep.add(b.id); let el = stage.querySelector(`[data-id="${b.id}"]`); if (!el) { el = makeEl(b); stage.appendChild(el); } place(b, el); if (el.dataset.sig !== sig(b)) { el.dataset.sig = sig(b); fillBody(b, el); } });
@@ -417,18 +438,22 @@ window.MRRoomCanvas = (function () {
       empty.style.display = blocks.length ? 'none' : '';
       select(sel); drawLinks();
     }
-    const sig = b => b.type + '|' + JSON.stringify(b.data);
+    const sig = b => b.type + '|' + b.n + '|' + JSON.stringify(b.data);
     function place(b, el, lift) {
       el.style.left = b.x + 'px'; el.style.top = b.y + 'px'; el.style.width = b.w + 'px'; el.style.height = b.h + 'px'; el.style.zIndex = String(b.z);
       const d = depthOf(b);
       el.style.transform = cam.depth ? `translateZ(${(zOf(b, rankOf[b.id]) + (lift ? 40 : 0)).toFixed(1)}px)` : '';
       el.style.opacity = cam.depth && d < 0 ? String(1 + d * 0.07) : '';          // far things are a little paler: air between
+      const blur = cam.depth && d < 0 ? Math.round(-d * 0.9 * 10) / 10 : 0;            // far things are soft; hovering or selecting one brings it into focus (CSS)
+      el.style.filter = blur ? `blur(${blur}px)` : '';
+      const ix = el.querySelector('.rc-idx'); if (ix) ix.textContent = b.type === 'node' ? '' : numText(b.n);
       const t = el.querySelector('.rc-tools__type'); if (t) t.textContent = TYPES[b.type].label + (d ? (d > 0 ? ' · near ' : ' · far ') + Math.abs(d) : '');
     }
     function makeEl(b) {
       const el = document.createElement('div');
       el.className = `rc-block rc-block--${b.type}`; el.dataset.id = b.id;
       el.innerHTML = `
+        <span class="rc-idx"></span>
         <div class="rc-tools">
           <span class="rc-tools__type">${esc(TYPES[b.type].label)}</span>
           ${b.type !== 'text' && b.type !== 'web' && b.type !== 'node' ? '<button data-act="fill" title="Fill this block">fill</button>' : ''}
@@ -470,7 +495,7 @@ window.MRRoomCanvas = (function () {
             <div class="rc-pl__rows">${ts.map((t, i) => `<div class="rc-pl__row" data-i="${i}"><img class="rc-pl__cover" src="${coverUrl(t, 192)}" alt="" loading="lazy" draggable="false"><div class="rc-pl__meta"><div class="rc-pl__t" data-act="open" data-tid="${t.id}">${esc(t.title || 'Untitled')}</div><div class="rc-pl__a">${esc(t.artist_name || t.artist || '')}</div></div><button class="rc-pl__play" data-act="playrow" data-i="${i}" title="Play now">▶</button></div>`).join('')}</div>
           </div>` : `<button class="rc-fillme" data-act="fill">+ choose a playlist</button>`;
       } else if (b.type === 'node') {
-        body.innerHTML = nodeHtml(d);
+        body.innerHTML = nodeHtml(d, b.n);
       } else if (b.type === 'web') {
         body.innerHTML = webHtml(d);
       } else if (b.type === 'mix') {
@@ -711,10 +736,12 @@ window.MRRoomCanvas = (function () {
     view.addEventListener('wheel', e => {
       const v = viewSize();
       if (e.ctrlKey) {                                  // a trackpad pinch arrives as ctrl + wheel
-        e.preventDefault(); Object.assign(cam, zoomAt(cam, Math.exp(-wheelPx(e.deltaY, e.deltaMode, v.H) * 0.012), e.clientX - v.l, e.clientY - v.t)); applyCam(); return;
+        e.preventDefault(); stopGlide(); Object.assign(cam, zoomAt(cam, Math.exp(-wheelPx(e.deltaY, e.deltaMode, v.H) * 0.012), e.clientX - v.l, e.clientY - v.t)); applyCam(); return;
       }
       if (scrollsUnder(e)) return;
-      e.preventDefault(); cam.x -= wheelPx(e.deltaX, e.deltaMode, v.W); cam.y -= wheelPx(e.deltaY, e.deltaMode, v.H); applyCam();
+      e.preventDefault(); const dx = wheelPx(e.deltaX, e.deltaMode, v.W), dy = wheelPx(e.deltaY, e.deltaMode, v.H);
+      if (reduced) { cam.x -= dx; cam.y -= dy; applyCam(); return; }
+      glide.vx -= dx * 0.1; glide.vy -= dy * 0.1; kick();                  // (0.1 over the whole glide adds up to exactly the distance scrolled)
     }, { passive: false });
     let gScale = 1;                                     // Safari and the app: pinch arrives as gesture events
     view.addEventListener('gesturestart', e => { e.preventDefault(); gScale = 1; });
@@ -742,7 +769,7 @@ window.MRRoomCanvas = (function () {
       }
       if (e.target.closest('.rc-block') || e.target.closest('.rc-links g')) return;
       if (e.button !== 0 && e.button !== 1) return;
-      lookTo = null;
+      lookTo = null; stopGlide();
       panning = { sx: e.clientX, sy: e.clientY, cx: cam.x, cy: cam.y, moved: false };
       view.classList.add('pan'); view.setPointerCapture(e.pointerId); e.preventDefault();
     });
@@ -757,20 +784,43 @@ window.MRRoomCanvas = (function () {
       if (panning) {
         const dx = e.clientX - panning.sx, dy = e.clientY - panning.sy;
         if (!panning.moved && Math.hypot(dx, dy) < 4) return;
-        panning.moved = true; cam.x = panning.cx + dx; cam.y = panning.cy + dy; applyCam();
+        panning.moved = true; const nx = panning.cx + dx, ny = panning.cy + dy;
+        glide.vx = (nx - cam.x) * 0.6 + glide.vx * 0.4; glide.vy = (ny - cam.y) * 0.6 + glide.vy * 0.4;       // how fast the hand is going, for when it lets go
+        cam.x = nx; cam.y = ny; applyCam();
       } else look(e);
     });
     const endPan = e => {
       fingers.delete(e.pointerId); if (fingers.size < 2) pinch = null;
       if (!panning) return; const p = panning; panning = null; view.classList.remove('pan');
+      if (p.moved) { if (reduced) stopGlide(); else kick(); }
       if (!p.moved) { cancelLinking(); select(null); selectLink(null); closeSheet(); }
     };
     view.addEventListener('pointerup', endPan); view.addEventListener('pointercancel', endPan);
 
+    // a small ring follows the pointer over bare canvas (over a block, the block's own cursor shows)
+    const ring = host.querySelector('#rc-ring'), fine = !!(window.matchMedia && matchMedia('(pointer: fine)').matches);
+    let rx = 0, ry = 0, rtx = 0, rty = 0, ringRaf = 0;
+    if (fine) view.classList.add('ringed');
+    function ringStep() {
+      ringRaf = 0; const k = reduced ? 1 : 0.3; rx += (rtx - rx) * k; ry += (rty - ry) * k;
+      ring.style.transform = `translate(${rx.toFixed(1)}px,${ry.toFixed(1)}px)`;
+      if (Math.abs(rtx - rx) > 0.3 || Math.abs(rty - ry) > 0.3) ringRaf = requestAnimationFrame(ringStep);
+    }
+    view.addEventListener('pointermove', e => {
+      if (!fine || e.pointerType === 'touch') return;
+      rtx = e.clientX; rty = e.clientY;
+      if (!ring.classList.contains('on')) { rx = rtx; ry = rty; }
+      ring.classList.toggle('on', !e.target.closest('.rc-block, .rc-links g'));
+      if (!ringRaf) ringRaf = requestAnimationFrame(ringStep);
+    });
+    view.addEventListener('pointerleave', () => ring.classList.remove('on'));
+    view.addEventListener('pointerdown', () => ring.classList.add('down'));
+    addEventListener('pointerup', () => ring.classList.remove('down'));
+
     host.querySelector('#rc-hud').addEventListener('click', e => {
       const b = e.target.closest('[data-hud]'); if (!b) return; const v = viewSize(), h = b.dataset.hud;
       if (h === 'fit') fitNow(true);
-      else if (h === 'in' || h === 'out') { Object.assign(cam, zoomAt(cam, h === 'in' ? 1.25 : 0.8, v.W / 2, v.H / 2)); applyCam(); }
+      else if (h === 'in' || h === 'out') { stopGlide(); Object.assign(cam, zoomAt(cam, h === 'in' ? 1.25 : 0.8, v.W / 2, v.H / 2)); applyCam(); }
       else if (h === 'depth') {
         cam.depth = !cam.depth; try { localStorage.setItem(depthKey, cam.depth ? '1' : '0'); } catch (_) {}
         centreOrigin(); renderAll(); applyCam();

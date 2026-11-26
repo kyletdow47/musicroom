@@ -38,3 +38,18 @@ def clean_links(links, blocks):
         if len(out) >= MAX_LINKS:
             break
     return out
+
+
+def next_number(stored, blocks):
+    """The highest archive number ever given out on this wall: what was stored, or the highest on any block now, whichever is
+    larger, so a number is never used twice even after its block is deleted. Always a whole number from 0 to a billion."""
+    top = 0
+    for b in blocks or []:
+        n = b.get("n") if isinstance(b, dict) else None
+        if isinstance(n, int) and not isinstance(n, bool) and 0 < n <= 10**9:
+            top = max(top, n)
+    try:
+        st = int(stored) if not isinstance(stored, bool) else 0
+    except (TypeError, ValueError):
+        st = 0
+    return max(top, min(max(st, 0), 10**9))

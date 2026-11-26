@@ -12774,6 +12774,7 @@ def _room_canvas_load(pid):
     if not isinstance(d.get("blocks"), list):
         d["blocks"] = []
     d["links"] = _wl.clean_links(d.get("links"), d["blocks"])          # the lines between blocks (see wall_links.py)
+    d["next"] = _wl.next_number(d.get("next"), d["blocks"])            # the highest archive number ever given out (numbers are never reused)
     return d
 
 
@@ -12795,11 +12796,13 @@ def api_room_canvas_save(pid):
     # Lines are kept when a caller that only knows about blocks (Explore's "save this moment", Keep) saves without
     # mentioning them: the existing lines stay, minus any whose block is gone.
     links = _wl.clean_links(d["links"] if "links" in d else _room_canvas_load(pid).get("links"), blocks)
-    payload = _json.dumps({"v": 1, "blocks": blocks, "links": links})
+    nxt = _wl.next_number(max(int(d["next"]) if isinstance(d.get("next"), (int, float)) and not isinstance(d.get("next"), bool) else 0,
+                              _room_canvas_load(pid).get("next", 0)), blocks)             # it only ever goes up
+    payload = _json.dumps({"v": 1, "blocks": blocks, "links": links, "next": nxt})
     if len(payload) > 2_000_000:
         return jsonify({"error": "too big"}), 413
     set_setting(f"room_canvas:{pid}", payload)
-    return jsonify({"ok": True, "n": len(blocks), "links": len(links)})
+    return jsonify({"ok": True, "n": len(blocks), "links": len(links), "next": nxt})
 
 
 @app.route("/api/room/canvas/image", methods=["POST"])

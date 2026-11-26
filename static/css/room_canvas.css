@@ -269,3 +269,46 @@
 .rc-row img, .rc-row .ph{ width:40px; height:40px; object-fit:cover; flex:none; border:1px solid var(--border); display:block; margin:0; max-height:none; }
 .rc-row b{ font-family:var(--f-display); font-weight:400; font-size:1.1rem; line-height:1.1; display:block; }
 .rc-row small{ font-family:var(--f-mono); font-size:.64rem; color:var(--muted); display:block; margin-top:2px; }
+
+
+/* ── the look: an archive on an open ground ──
+   Words, quotes, pictures and music have no box: they sit on the ground, each with a small number like an archive's index.
+   Far things are soft until you point at them; the controls are bracketed words; a small ring follows the pointer. */
+.rc-view{ background-image:none !important; }
+.rc-block--text, .rc-block--quote, .rc-block--image, .rc-block--node{ background:transparent; border-color:transparent; box-shadow:none; }
+.rc-block--text:hover, .rc-block--quote:hover, .rc-block--image:hover{ border-color:var(--border); }
+.rc-block{ transition:filter .3s ease, opacity .3s ease; }
+.rc-block:hover, .rc-block.sel, .rc-block.live{ filter:none !important; opacity:1 !important; }
+.rc-idx{ position:absolute; left:0; bottom:100%; margin-bottom:4px; font-family:var(--f-mono); font-size:.6rem; letter-spacing:.1em; color:var(--muted); pointer-events:none; white-space:nowrap; }
+.rc-idx:empty{ display:none; }
+.rc-block:hover .rc-idx, .rc-block.sel .rc-idx{ visibility:hidden; }                    /* the toolbar takes that spot */
+
+.rc-node{ gap:5px; }
+.rc-node__cap{ font-family:var(--f-mono); font-size:.62rem; letter-spacing:.08em; text-transform:uppercase; color:var(--text); max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; background:none; padding:0; line-height:1.2; }
+.rc-node__cap i, .rc-node__tag i{ font-style:normal; color:var(--muted); margin-right:6px; }
+.rc-node__n{ display:none; }
+.rc-node__m{ background:none; padding:0; margin:0; }
+.rc-node__im{ border:0; }
+.rc-node--album .rc-node__im, .rc-node--home .rc-node__im{ border:0; }
+.rc-node__tag{ border:0; background:none; padding:0; border-bottom:1px solid var(--border); border-radius:0; font-size:.62rem; }
+.rc-node--genre .rc-node__tag{ border-bottom-style:dashed; }
+
+.rc-hud{ gap:2px; }
+.rc-hud button{ border:0; background:none; padding:6px 7px; letter-spacing:.12em; color:var(--text); }
+.rc-hud button::before{ content:"[ "; color:var(--muted); } .rc-hud button::after{ content:" ]"; color:var(--muted); }
+.rc-hud button:hover{ border:0; text-decoration:underline; text-underline-offset:4px; }
+.rc-hud button.on{ background:none; color:var(--text); border:0; text-decoration:underline; text-underline-offset:4px; }
+.rc-add{ background:none; border:0; box-shadow:none; color:var(--text); font-family:var(--f-mono); font-weight:400; letter-spacing:.14em; padding:10px 12px; }
+.rc-add::before{ content:"[ "; color:var(--muted); } .rc-add::after{ content:" ]"; color:var(--muted); }
+.rc-add:hover{ filter:none; text-decoration:underline; text-underline-offset:4px; }
+
+.rc-view.ringed{ cursor:none; }
+.rc-ring{ position:fixed; left:0; top:0; width:18px; height:18px; margin:-9px 0 0 -9px; box-sizing:border-box; border:1px solid var(--text); border-radius:50%; pointer-events:none; z-index:60; opacity:0;
+  transition:opacity .15s ease, width .15s ease, height .15s ease, margin .15s ease, background .15s ease; }
+.rc-ring.on{ opacity:1; }
+.rc-ring.down{ width:7px; height:7px; margin:-3.5px 0 0 -3.5px; background:var(--text); }
+@media (prefers-reduced-motion: reduce){ .rc-block{ transition:none; } }
+
+.rc-node__more{ position:absolute; right:auto; left:100%; top:0; margin-left:-14px; width:auto; height:auto; line-height:1; border:0; background:none; font-family:var(--f-mono); font-size:.72rem; color:var(--muted); }
+.rc-node__more::before{ content:"["; } .rc-node__more::after{ content:"]"; }
+.rc-block--node:hover .rc-node__more{ color:var(--text); }
