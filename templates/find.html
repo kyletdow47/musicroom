@@ -282,6 +282,7 @@
     $('fd-tracks').innerHTML = tracks.map((t, i) => {
       const u = encodeURIComponent((t.artist + ' ' + t.title).trim());
       const st = t.state === 'wait' ? '' : t.state === 'busy' ? 'looking…' :
+        t.state === 'failed' ? 'Spotify didn\'t answer' :
         t.hit ? '<span class="ok">on Spotify</span>' : 'not found · <a target="_blank" rel="noopener" href="https://open.spotify.com/search/' + u + '">search</a>';
       return '<div class="fd__tr"><input type="checkbox" data-i="' + i + '"' + (t.ok ? ' checked' : '') + '>' +
         '<span class="t"><a target="_blank" rel="noopener" href="' + esc(R.meta.url + '?t=' + Math.round(t.start_s)) + '" title="Play the video from here">' + clock(t.start_s) + '</a></span>' +
@@ -293,15 +294,21 @@
   $('fd-mixfind').onclick = async () => {
     $('fd-mixfind').disabled = true;
     for (const t of tracks) {
-      if (t.state === 'done') continue;
+      if (t.state === 'done') continue;                              // ones already answered are not asked again
       t.state = 'busy'; drawTracks();
       const d = await spotify((t.artist + ' ' + t.title).trim());
       if (!spotifyOn) { $('fd-mixfind').disabled = false; return notConnected($('fd-tracks')); }
-      t.hit = (d.results || []).find(r => r.stream_type === 'track') || null;
-      t.state = 'done'; drawTracks();
+      if (d.error) { t.hit = null; t.state = 'failed'; }           // Spotify did not answer: that is not the same as "not on Spotify"
+      else { t.hit = (d.results || []).find(r => r.stream_type === 'track') || null; t.state = 'done'; }
+      drawTracks();
       await new Promise(r => setTimeout(r, 250));
     }
-    $('fd-mixfind').disabled = false; landMix();
+    const failed = tracks.filter(t => t.state === 'failed').length;
+    $('fd-mixfind').disabled = false;
+    $('fd-mixfind').textContent = failed ? 'Try the ' + failed + ' that did not answer' : 'Find them on Spotify';
+    if (failed) say($('fd-msg'), failed + (failed === 1 ? ' song' : ' songs') + ' could not be checked because Spotify did not answer. Press the button again to try those.', true);
+    else say($('fd-msg'), '');
+    landMix();
   };
 
   // ── TALK ───────────────────────────────────────────────────────────

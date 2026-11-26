@@ -511,7 +511,12 @@
   async function loadLiked(){
     if (likedBusy) return; likedBusy = true; startMsg('Loading your liked songs…');
     try {
-      const r = await fetch('/api/spotify/saved-tracks?limit=50&offset=' + liked.length), d = await r.json();
+      let r, d;                                                      // Spotify has brief hiccups: try again before giving up
+      for (let tryN = 0; tryN < 3; tryN++) {
+        r = await fetch('/api/spotify/saved-tracks?limit=50&offset=' + liked.length); d = await r.json().catch(() => ({}));
+        if (r.ok || r.status === 401) break;
+        await new Promise(res => setTimeout(res, tryN ? 1500 : 700));
+      }
       if (!r.ok) { startMsg(r.status === 401 ? 'Spotify is not connected. Connect it in Tools → Spotify.' : (d.error || 'Spotify would not list them just now.'), true); return; }
       liked = liked.concat((d.items || []).map(ConnStart.fromLiked).filter(Boolean)); likedMore = !!d.has_more;
       startMsg(liked.length + ' of ' + (d.total || liked.length) + ' liked songs loaded.'); drawLiked();

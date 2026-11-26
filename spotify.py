@@ -570,6 +570,26 @@ class SpotifyClient:
             _player_backoff(out.get("_retry_after") or 5)
         return status, out
 
+    # Spotify now and then answers 503 ("temporarily unavailable"), or drops the connection, for a moment: the same
+    # search a second later works. (Seen on 2026-11-26: 6 of 20 searches failed this way, none for rate limits.)
+    # A person typing a search should not have to press again, so these are tried again, shortly. Never a 429
+    # (Spotify asking us to slow down: _player_call already stands down for it) and never a 4xx the person has to fix.
+    TRANSIENT = (500, 502, 503, 504)
+
+    def _player_call_retry(self, method, path, params=None, body=None, timeout=8, pauses=(0.4, 1.0), sleep=time.sleep):
+        status, out = self._player_call(method, path, params, body, timeout)
+        dropped = 0
+        for pause in pauses:
+            if status == 0:
+                dropped += 1
+                if dropped > 1:                     # a dropped connection waits out the timeout: try that once only
+                    break
+            elif status not in self.TRANSIENT:
+                break
+            sleep(pause)
+            status, out = self._player_call(method, path, params, body, timeout)
+        return status, out
+
     @staticmethod
     def _why(data):
         err = data.get("error") if isinstance(data, dict) else None
@@ -620,8 +640,8 @@ class SpotifyClient:
         albums and artists. Their own gesture, one call per pause in typing —
         not the batch use the note below ruled out. (Since Feb 2026 a search
         returns at most 10 of each kind.) → (status, {'tracks','albums','artists'})"""
-        status, data = self._player_call("GET", "/search", {"q": q, "type": "track,album,artist",
-                                                            "limit": max(1, min(10, int(limit)))})
+        status, data = self._player_call_retry("GET", "/search", {"q": q, "type": "track,album,artist",
+                                                                  "limit": max(1, min(10, int(limit)))})
         if status != 200:
             return status, {"tracks": [], "albums": [], "artists": []}
         items = lambda k: [x for x in ((data.get(k) or {}).get("items") or []) if isinstance(x, dict) and x.get("id")]

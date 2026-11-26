@@ -17,6 +17,7 @@ Routes:
 """
 import json
 import re
+import time
 import urllib.parse
 import urllib.request
 
@@ -265,6 +266,21 @@ def album_items(data, image=""):
     return out
 
 
+_TRANSIENT = (500, 502, 503, 504)
+
+
+def get_retry(spo, path, params, pauses=(0.5, 1.5), sleep=time.sleep):
+    """spo._api_get, tried again after Spotify's brief hiccups (a 503 and the like), which pass in a moment.
+    A 429 or a 4xx is returned as it is: those need time, or the person, not another try."""
+    data = spo._api_get(path, params)
+    for pause in pauses:
+        if not (isinstance(data, dict) and data.get("error") and data.get("status") in _TRANSIENT):
+            break
+        sleep(pause)
+        data = spo._api_get(path, params)
+    return data
+
+
 def register(app, get_spotify=None):
     from flask import jsonify, render_template, request
 
@@ -296,7 +312,7 @@ def register(app, get_spotify=None):
         image = (request.args.get("image") or "")[:500]
         items, offset = [], 0
         while offset < 500:
-            data = spo._api_get(f"/albums/{aid}/tracks", {"limit": 50, "offset": offset})
+            data = get_retry(spo, f"/albums/{aid}/tracks", {"limit": 50, "offset": offset})
             if "error" in data:
                 return jsonify({"error": data.get("error"), "status": data.get("status") or 502}), 200
             items += album_items(data, image)

@@ -158,7 +158,31 @@ chk(mini(FakeSpo(ok=False)).get("/api/find/album-tracks?id=ABCDEFGHIJ1234").stat
 e = mc.get("/api/find/album-tracks?id=FORBIDDEN12345").get_json()
 chk(e["error"] == "Forbidden" and e["status"] == 403, "Spotify's refusal is passed on in words, not as a crash")
 chk(mini(None).get("/api/find/album-tracks?id=ABCDEFGHIJ1234").status_code == 401, "no Spotify client at all -> 401")
+# ── Spotify's brief hiccups on the album's songs ──
+naps = []
+class Flaky:
+    def __init__(self, script): self.script, self.n = script, 0
+    def is_connected(self): return True
+    def _api_get(self, path, params=None):
+        r = self.script[min(self.n, len(self.script) - 1)]; self.n += 1
+        return r
+GOODP = {"items": [{"id": "t1", "name": "One", "artists": []}], "next": None}
+spo = Flaky([GOODP]); d = f.get_retry(spo, "/albums/X/tracks", {}, sleep=naps.append)
+chk(d == GOODP and spo.n == 1 and naps == [], "get_retry: a good answer comes straight back")
+naps.clear(); spo = Flaky([{"error": "Service Unavailable", "status": 503}, GOODP]); d = f.get_retry(spo, "/albums/X/tracks", {}, sleep=naps.append)
+chk(d == GOODP and spo.n == 2 and naps == [0.5], "get_retry: a 503 then fine: the person never sees it")
+naps.clear(); spo = Flaky([{"error": "Service Unavailable", "status": 503}]); d = f.get_retry(spo, "/albums/X/tracks", {}, sleep=naps.append)
+chk(d["status"] == 503 and spo.n == 3 and naps == [0.5, 1.5], "get_retry: 503 every time ends after three tries, with the error")
+for code in (429, 403, 404, 401):
+    naps.clear(); spo = Flaky([{"error": "no", "status": code}, GOODP]); d = f.get_retry(spo, "/x", {}, sleep=naps.append)
+    chk(d.get("status") == code and spo.n == 1 and naps == [], f"get_retry: {code} is returned as it is, never retried")
+chk(f.get_retry(Flaky(["junk"]), "/x", {}, sleep=naps.append) == "junk", "get_retry: an odd answer is not mistaken for an error")
+sp3 = Flaky([{"error": "Service Unavailable", "status": 503}, GOODP]); f.time.sleep = lambda s: None
+rr = mini(sp3).get("/api/find/album-tracks?id=ABCDEFGHIJ1234").get_json()
+chk(rr.get("total") == 1 and sp3.n == 2, "the album-tracks route survives a 503 on its first try")
 hp = open(os.path.join(PROJ, "templates", "find.html"), encoding="utf-8").read()
+chk("t.state = 'failed'" in hp and "Spotify didn\\'t answer" in hp and "did not answer" in hp, "mix: a Spotify failure is shown as 'didn't answer', not as 'not found', and can be retried")
+chk("t.state === 'done') continue" in hp, "mix: songs already answered are not asked again on a retry")
 chk("/api/find/album-tracks" in hp and "albumSongs" in hp, "page asks for the songs and lands them")
 
 print("")
