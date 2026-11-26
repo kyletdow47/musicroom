@@ -312,3 +312,48 @@
 .rc-node__more{ position:absolute; right:auto; left:100%; top:0; margin-left:-14px; width:auto; height:auto; line-height:1; border:0; background:none; font-family:var(--f-mono); font-size:.72rem; color:var(--muted); }
 .rc-node__more::before{ content:"["; } .rc-node__more::after{ content:"]"; }
 .rc-block--node:hover .rc-node__more{ color:var(--text); }
+
+/* ── the record: a page for one node, in three columns (what is joined to it · the cover · the facts and the songs) ── */
+.rc-rec{ display:none; position:absolute; inset:0; z-index:45; overflow-y:auto; background:var(--bg); color:var(--text); padding:20px 28px 60px; font-family:var(--f-mono); font-size:.74rem; line-height:1.55; }
+.rc-rec.on{ display:block; }
+.rc-rec button{ appearance:none; border:0; background:none; padding:0; color:var(--text); font:inherit; letter-spacing:.1em; text-transform:uppercase; cursor:pointer; border-radius:0; }
+.rc-rec button:hover, .rc-rec a:hover{ text-decoration:underline; text-underline-offset:4px; }
+.rc-rec a{ color:var(--text); letter-spacing:.1em; text-transform:uppercase; text-decoration:none; }
+.rc-rec__top{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:46px; }
+.rc-rec__num{ letter-spacing:.12em; }
+.rc-rec__nav{ display:flex; gap:18px; }
+.rc-rec__cols{ display:grid; grid-template-columns:minmax(240px, 1fr) minmax(260px, 1.15fr) minmax(250px, 1fr); gap:44px; align-items:start; max-width:1380px; margin:0 auto; }
+.rc-rec h3{ display:flex; justify-content:space-between; font-weight:400; font-size:.7rem; letter-spacing:.12em; text-transform:uppercase; margin:0 0 14px; padding:0 0 8px; border-bottom:1px solid var(--border); }
+.rc-rec h3 i{ font-style:normal; color:var(--muted); }
+.rc-rec h3:not(:first-child){ margin-top:34px; }
+.rc-rec__none{ color:var(--muted); margin:0 0 14px; }
+.rc-rec__item{ margin:0 0 20px; }
+.rc-rec__no{ display:block; color:var(--muted); letter-spacing:.1em; margin-bottom:4px; }
+.rc-rec__item p{ margin:0 0 6px; }
+.rc-rec__q{ font-family:var(--f-display); font-style:italic; font-size:1.25rem; line-height:1.25; }
+.rc-rec__by{ color:var(--muted); }
+.rc-rec__h{ font-family:var(--f-display); font-size:1.15rem; line-height:1.2; }
+.rc-rec__item img{ max-width:100%; height:auto; display:block; }
+.rc-rec__add{ margin:6px 0 0; }
+.rc-rec__note{ margin:10px 0 0; } .rc-rec__note[hidden]{ display:none; }
+.rc-rec__note textarea{ width:100%; box-sizing:border-box; background:transparent; color:var(--text); border:1px solid var(--border); border-radius:0; padding:8px; font:inherit; resize:vertical; margin:0 0 8px; }
+.rc-rec__near{ display:flex; gap:12px; width:100%; text-align:left; padding:5px 0; text-transform:none !important; letter-spacing:.02em !important; border-bottom:1px solid var(--border) !important; }
+.rc-rec__near span{ color:var(--muted); min-width:3ch; }
+.rc-rec__mid{ position:sticky; top:12px; }
+.rc-rec__mid img{ width:100%; max-height:calc(100vh - 220px); object-fit:contain; object-position:top; display:block; }
+.rc-rec__ph{ aspect-ratio:1; display:flex; align-items:center; justify-content:center; font-family:var(--f-display); font-size:6rem; color:var(--muted); border:1px solid var(--border); }
+.rc-rec__right h2{ font-family:var(--f-display); font-weight:400; font-size:2rem; line-height:1.05; margin:0 0 10px; }
+.rc-rec__song{ color:var(--muted); margin:0 0 14px; }
+.rc-rec__facts{ display:grid; grid-template-columns:1fr 1fr; gap:16px 22px; margin:20px 0 26px; }
+.rc-rec__facts div{ min-width:0; } .rc-rec__facts dt{ color:var(--muted); } .rc-rec__facts dd{ margin:0; overflow-wrap:anywhere; }
+.rc-rec__prev h4, .rc-rec__addroom h4{ font-weight:400; font-size:.66rem; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin:0 0 8px; }
+.rc-rec__prev{ margin:0 0 22px; }
+.rc-rec__addroom{ border-top:1px solid var(--text); padding-top:10px; margin:0 0 22px; }
+.rc-rec__addroom select, .rc-rec__addroom input[type=text]{ width:100%; box-sizing:border-box; background:transparent; color:var(--text); border:1px solid var(--border); border-radius:0; padding:7px 8px; font:inherit; margin:0 0 6px; }
+.rc-rec__addroom .rc-info__row button{ border:1px solid var(--border); padding:6px 9px; }
+.rc-rec__addroom .rc-info__row .go{ background:var(--text); color:var(--bg); border-color:var(--text); }
+.rc-rec__addroom .err{ color:var(--red); }
+.rc-rec__addroom p{ margin:0 0 8px; color:var(--muted); } .rc-rec__addroom p a{ text-decoration:underline; }
+.rc-rec__links{ display:flex; flex-wrap:wrap; gap:16px; }
+.rc-rec .rc-song{ font-size:.72rem; } .rc-rec .rc-song button{ border:1px solid var(--border); width:26px; height:26px; text-align:center; letter-spacing:0; }
+@media (max-width:980px){ .rc-rec__cols{ grid-template-columns:1fr; gap:30px; } .rc-rec__mid{ position:static; order:-1; } }

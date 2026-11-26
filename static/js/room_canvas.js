@@ -412,7 +412,7 @@ window.MRRoomCanvas = (function () {
       if (i < 0 || j < 0 || j >= zs.length) return;
       [zs[i].z, zs[j].z] = [zs[j].z, zs[i].z]; renderAll(); dirty();
     }
-    const hooks = { select: [], click: [] };
+    const hooks = { select: [], click: [], dblclick: [] };
     const fire = (kind, b) => hooks[kind].forEach(f => { try { f(b); } catch (_) {} });
     function select(id) {
       sel = id;
@@ -698,6 +698,7 @@ window.MRRoomCanvas = (function () {
       else if (a === 'openweb') { const u = String((b.data || {}).url || ''); if (/^\/connections\?/.test(u)) location.href = u; }
       else if (a === 'openurl') openUrl(b.type === 'quote' ? withStart(b.data.url, quoteAt(b.data)) : b.data.url);
     });
+    stage.addEventListener('dblclick', e => { const el = e.target.closest('.rc-block'); if (el && !e.target.closest('.rc-tools, .rc-dot, [contenteditable], input, textarea')) fire('dblclick', byId(el.dataset.id)); });
     function flash(btn, txt) { const o = btn.textContent; btn.textContent = txt; setTimeout(() => { btn.textContent = o; }, 1200); }
     stage.addEventListener('input', e => {
       const ed = e.target.closest('[contenteditable][data-k]'); if (!ed) return;
@@ -872,12 +873,13 @@ window.MRRoomCanvas = (function () {
     linkBox.addEventListener('input', e => { const l = links.find(x => linkKey(x.a, x.b) === selLink); if (l && e.target.matches('[data-l="label"]')) { l.label = e.target.value.slice(0, 80); drawLinks(); dirty(); } });
     linkBox.addEventListener('click', e => { if (e.target.matches('[data-l="remove"]')) removeLink(selLink); });
     linkBox.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); selectLink(null); } });
+    const isTyping = e => !!(e.target && e.target.matches && e.target.matches('input, textarea, [contenteditable]'));      // (a key aimed at the page itself has no element to ask)
     addEventListener('keydown', e => {
       if (!host.classList.contains('on')) return;
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selLink && !e.target.matches('input, textarea, [contenteditable]')) { e.preventDefault(); removeLink(selLink); return; }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && sel && !e.target.matches('input, textarea, [contenteditable]')) { e.preventDefault(); if (confirm('Remove this block?')) removeBlock(sel); }
-      if (e.key === 'Escape' && !e.target.matches('input, textarea, [contenteditable]')) { cancelLinking(); closeSheet(); select(null); selectLink(null); }
-      if (!e.target.matches('input, textarea, [contenteditable]') && !e.metaKey && !e.ctrlKey) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selLink && !isTyping(e)) { e.preventDefault(); removeLink(selLink); return; }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && sel && !isTyping(e)) { e.preventDefault(); if (confirm('Remove this block?')) removeBlock(sel); }
+      if (e.key === 'Escape' && !isTyping(e)) { cancelLinking(); closeSheet(); select(null); selectLink(null); }
+      if (!isTyping(e) && !e.metaKey && !e.ctrlKey) {
         const v = viewSize();
         if (e.key === '0') fitNow(true);
         else if (e.key === '+' || e.key === '=') { Object.assign(cam, zoomAt(cam, 1.25, v.W / 2, v.H / 2)); applyCam(); }

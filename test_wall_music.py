@@ -71,6 +71,22 @@ out.free = {
   crowded: (() => { const rs = []; for (let x = -4600; x < 4600; x += 250) for (let y = -4600; y < 4600; y += 250) rs.push(R(x, y, 240, 240)); return W.freeSpot(rs, { x: 0, y: 0 }, { w: 300, h: 300 }); })(),
   padZero: W.freeSpot([R(160, 0, 100, 100)], { x: 0, y: 0 }, { w: 300, h: 100 }, 0),
 };
+// the record page
+const blocks = [
+  { id: 'A', n: 3, type: 'node', data: { kind: 'album', name: 'Home', sub: 'Me', year: '2025', tracks: 14, image: 'https://x/a.jpg', url: 'https://open.spotify.com/album/1', song: { title: 'Track' } } },
+  { id: 'Q', n: 1, type: 'quote', data: { text: 'words', who: 'Someone' } }, { id: 'T', n: 2, type: 'text', data: { heading: 'h', body: 'b' } },
+  { id: 'L1', n: 4, type: 'node', data: { kind: 'label', name: 'Warp' } }, { id: 'L2', n: 5, type: 'node', data: { kind: 'label', name: 'Ninja' } }, { id: 'G', n: 6, type: 'node', data: { kind: 'genre', name: 'Electro' } },
+  { id: 'R2', n: 9, type: 'node', data: { kind: 'artist', name: 'Second' } }, { id: 'R1', n: 8, type: 'node', data: { kind: 'artist', name: 'First' } }, { id: 'X', n: 10, type: 'mix', data: {} }, { id: 'Z', n: 11, type: 'text', data: {} }];
+const links = [{ a: 'A', b: 'Q', kind: 'mine', label: 'said about' }, { a: 'T', b: 'A', kind: 'mine', label: '' }, { a: 'A', b: 'L1', kind: 'near' }, { a: 'L2', b: 'A', kind: 'near' }, { a: 'A', b: 'G', kind: 'near' },
+  { a: 'A', b: 'R2', kind: 'near' }, { a: 'A', b: 'R1', kind: 'mine', label: 'mine now' }, { a: 'A', b: 'A', kind: 'mine' }, { a: 'A', b: 'GHOST', kind: 'mine' }, { a: 'R1', b: 'X', kind: 'mine' }, { a: 'A', b: 'Q', kind: 'mine' }, null, 5];
+const rm = W.recordModel(blocks[0], blocks, links);
+out.rec = { n: rm.n, title: rm.title, kind: rm.kind, facts: rm.facts, mine: rm.mine.map(m => [m.id, m.type, m.line]), near: rm.near.map(n => [n.id, n.n, n.mine, n.line]), song: rm.song, spotify: rm.spotify, image: rm.image };
+const art = W.recordModel(blocks[7], blocks, links);
+out.recArtist = { facts: art.facts, mine: art.mine.map(m => m.id), near: art.near.map(n => n.id) };
+out.recNone = W.recordModel({ id: 'solo', n: 1, data: { kind: 'artist', name: 'S' } }, [], []).facts;
+out.recJunk = (() => { try { const m = W.recordModel({ id: 'A', data: {} }, [null, 5, { id: 'A' }, { id: 'B', type: 'node' }], [{ a: 'A', b: 'B' }, null]); return [m.mine.length, m.near.length, m.facts.length]; } catch (e) { return 'threw ' + e.message; } })();
+out.order = W.recordOrder(blocks);
+out.step = [W.stepRecord(['a', 'b', 'c'], 'a', 1), W.stepRecord(['a', 'b', 'c'], 'c', 1), W.stepRecord(['a', 'b', 'c'], 'a', -1), W.stepRecord(['a'], 'a', 1), W.stepRecord([], 'a', 1), W.stepRecord(['a', 'b'], 'zzz', 1)];
 // outwardFrom
 out.outward = [W.outwardFrom({ x: 0, y: 0 }, [{ x: -300, y: 0 }, { x: -300, y: 40 }]), W.outwardFrom({ x: 0, y: 0 }, []), W.outwardFrom({ x: 5, y: 5 }, [{ x: 5, y: 5 }]), W.outwardFrom({ x: 0, y: 0 }, [{ x: 0, y: 300 }])];
 // unpack an old frozen web
@@ -102,6 +118,14 @@ st = o["settle"]
 chk(st["count"] == 10 and st["finite"], "every new node gets a position")
 chk(st["gap"] >= 0, f"new nodes are clear of each other and of the node they grew from ({st['gap']}px to spare)")
 chk(st["meanX"] > 15 and st["minDist"] > 100, f"they fan out in the direction asked for, not on top of their parent (mean x {st['meanX']})")
+rc = o["rec"]
+chk(rc["n"] == 3 and rc["title"] == "Home" and rc["kind"] == "album" and rc["image"] == "https://x/a.jpg" and rc["spotify"].endswith("/album/1") and rc["song"]["title"] == "Track", "the record page knows its number, title, cover, link and the song you started from")
+chk(rc["facts"] == [["Artist", "Me"], ["Year", "2025"], ["Songs", "14"], ["Label", "Warp, Ninja"], ["Genres", "Electro"]], f"labels and genres joined to an album are its facts ({rc['facts']})")
+chk(rc["mine"] == [["Q", "quote", "said about"], ["T", "text", ""]], f"your own blocks joined to it are listed in the order they were numbered, once each, whichever end the line was drawn from ({rc['mine']})")
+chk(rc["near"] == [["R1", 8, True, "mine now"], ["R2", 9, False, ""]], f"the music near it is listed in numbered order and knows which lines are yours ({rc['near']})")
+chk(o["recArtist"]["mine"] == ["X"] and o["recArtist"]["near"] == ["A"] and [f[0] for f in o["recArtist"]["facts"]] == [], "an artist's page shows what is joined to it, and no facts it does not have")
+chk(o["recNone"] == [] and o["recJunk"] == [0, 0, 0], "a record with nothing joined to it, or a wall full of junk, gives an empty page and no crash")
+chk(o["order"] == ["A", "R1", "R2"] and o["step"] == ["b", "a", "c", "a", None, "a"], f"Next and Prev go through albums and artists in numbered order and wrap round ({o['order']}, {o['step']})")
 fr = o["free"]
 chk(fr["empty"] == {"x": 10, "y": 20} and fr["clear"] == {"x": 0, "y": 0}, "with nothing in the way, a new record goes exactly where the person is looking")
 chk(fr["blocked"]["ok"] and 100 < fr["blocked"]["dist"] < 800, f"with a block in the way it goes to the nearest free place, with a margin ({fr['blocked']['dist']}px away)")
@@ -135,6 +159,10 @@ chk("q.get('seed')" in wm and "q.get('music')" in wm and "wall.ready.then" in wm
 chk("/api/connections?" in wm and "/api/connections/preview?" in wm and "/api/spotify/saved-tracks" in wm and "/api/seinnteoir/state" in wm, "it uses the app's own endpoints")
 chk("esc(" in wm and wm.count("innerHTML") > 5, "everything it writes into the page is escaped")
 chk("data-type=\"__music\"" in rc and "window.WallMusic.openStart(at)" in rc, "the + menu has a Music entry")
+chk("wall.on('dblclick'" in wm and "stopImmediatePropagation()" in wm and "ArrowLeft" in wm, "double-click opens the record; Esc closes only it; the arrow keys step between records")
+chk("data-a=\"openrec\"" in wm and "var activeRoot = function" in wm and wm.count("data-prev") >= 3 and wm.count("data-add") >= 3, "the quick card and the page share one set of songs and one Add to My Room, drawn into whichever is open")
+chk("safeUrl" in wm and "/^(https?:\\/\\/|\\/)/.test(d.src" in wm, "links and pictures in the record page are checked before they are used")
+chk("const isTyping = e =>" in rc and "!e.target.matches('input, textarea, [contenteditable]')" not in rc, "keys aimed at the page itself no longer crash the wall's key handler")
 chk("data-act=\"unpack\"" in rc and "window.WallMusic.unpack(b.id)" in rc, "an old Web block has an 'unpack' button")
 css = open(os.path.join(PROJ, "static", "css", "room_canvas.css"), encoding="utf-8").read()
 mc = css[css.index("/* a music node:"):]

@@ -116,7 +116,39 @@
     return { nodes: out, edges: edges };
   }
 
-  var pure = { freeSpot: freeSpot, identOf: identOf, specOf: specOf, planWeb: planWeb, sizeOf: sizeOf, radiusOf: radiusOf, settle: settle, outwardFrom: outwardFrom, unpackPlan: unpackPlan, CAPS: CAPS, DEPTH: DEPTH };
+  // What a node's record page shows, worked out from the wall: its facts (the labels and genres joined to it count as facts),
+  // the things of YOUR OWN joined to it (words, quotes, links, pictures, videos), and the other music near it.
+  function recordModel(b, blocks, links) {
+    var d = (b && b.data) || {}, by = {}; (blocks || []).forEach(function (x) { if (x && x.id) by[x.id] = x; });
+    var labels = [], genres = [], near = [], mine = [], seen = {};
+    (links || []).forEach(function (l) {
+      if (!l || (l.a !== b.id && l.b !== b.id)) return;
+      var o = by[l.a === b.id ? l.b : l.a]; if (!o || o.id === b.id || seen[o.id]) return; seen[o.id] = 1;
+      var od = o.data || {};
+      if (o.type === 'node') {
+        if (!od.kind) return;                                           // a music block with nothing in it is not a neighbour
+        if (od.kind === 'label') labels.push(od.name); else if (od.kind === 'genre') genres.push(od.name);
+        else near.push({ id: o.id, n: o.n || 0, name: od.name || '', kind: od.kind, line: l.label || '', mine: l.kind === 'mine' });
+      } else mine.push({ id: o.id, n: o.n || 0, type: o.type, data: od, line: l.label || '' });
+    });
+    var byN = function (x, y) { return x.n - y.n; }; near.sort(byN); mine.sort(byN);
+    var facts = d.kind === 'album'
+      ? [['Artist', d.sub], ['Year', d.year], ['Songs', d.tracks ? String(d.tracks) : ''], ['Label', labels.join(', ')], ['Genres', genres.join(', ')]]
+      : [['Fans', d.fans != null ? String(d.fans) : ''], ['Records', d.albums ? String(d.albums) : ''], ['Label', labels.join(', ')], ['Genres', genres.join(', ')]];
+    return { id: b.id, n: b.n || 0, kind: d.kind, title: d.name || '', image: d.image || '', facts: facts.filter(function (f) { return f[1]; }), mine: mine, near: near,
+             song: d.song || null, spotify: d.url || '', deezer: d.deezer || '' };
+  }
+  // the records you can step between with the arrow keys: albums and artists, in the order they were numbered
+  function recordOrder(blocks) {
+    return (blocks || []).filter(function (b) { return b && b.type === 'node' && b.data && (b.data.kind === 'album' || b.data.kind === 'artist'); })
+      .sort(function (x, y) { return (x.n || 0) - (y.n || 0); }).map(function (b) { return b.id; });
+  }
+  function stepRecord(order, id, dir) {
+    var i = order.indexOf(id); if (i < 0 || !order.length) return order[0] || null;
+    return order[(i + dir + order.length) % order.length];
+  }
+
+  var pure = { recordModel: recordModel, recordOrder: recordOrder, stepRecord: stepRecord, freeSpot: freeSpot, identOf: identOf, specOf: specOf, planWeb: planWeb, sizeOf: sizeOf, radiusOf: radiusOf, settle: settle, outwardFrom: outwardFrom, unpackPlan: unpackPlan, CAPS: CAPS, DEPTH: DEPTH };
 
   // ── the page half ─────────────────────────────────────────────────────────
   var api = { pure: pure, attach: function () {}, openStart: function () {}, unpack: function () {} };
@@ -190,9 +222,16 @@
       if (nodeBlock(b) && !isTag(b.data.kind)) showInfo(b); else hideInfo();
     });
 
-    // ── the card for a selected record or artist: hear it, and decide ──
+    // ── the quick card for a selected record or artist, and its full page (the record) ──
+    // Both show the same songs and the same "Add to My Room", so those are drawn into whichever is open (see data-prev / data-add).
     var previews = {}, adds = {}, waiting = '', audio = new Audio(), playing = null; audio.preload = 'none';
-    room = RA.create(null, { onWait: function (t) { waiting = t; var b = wall.blocks.find(function (x) { return x.id === sel; }); if (b && addOf(b).state === 'finding') renderAdd(b); } });
+    var rec = document.createElement('div'); rec.className = 'rc-rec'; host.appendChild(rec);
+    var recId = null, pad = function (n) { return n > 0 ? String(n).padStart(3, '0') : ''; };
+    var panes = function () { return [info, rec]; };
+    var activeRoot = function () { return rec.classList.contains('on') ? rec : info; };
+    var blockById = function (id) { return wall.blocks.find(function (x) { return x.id === id; }); };
+    var safeUrl = function (u) { return /^https?:\/\//.test(u || '') ? u : ''; };
+    room = RA.create(null, { onWait: function (t) { waiting = t; var b = blockById(sel); if (b && addOf(b).state === 'finding') renderAdd(b); } });
     var addOf = function (b) { return adds[b.id] || (adds[b.id] = { state: 'idle' }); };
     function hideInfo() { stopPreview(); info.classList.remove('on'); info.innerHTML = ''; }
     function showInfo(b) {
@@ -200,42 +239,43 @@
       var meta = d.kind === 'album' ? [d.sub, d.year, d.tracks ? d.tracks + ' songs' : ''].filter(Boolean).join(' · ') : [d.role, fansText(d.fans), d.albums ? d.albums + ' records' : ''].filter(Boolean).join(' · ');
       info.innerHTML = '<button class="rc-info__x" data-a="close" title="Close">×</button>' + (d.image ? '<img src="' + esc(d.image) + '" alt="">' : '') +
         '<h2>' + esc(d.name) + '</h2><p>' + esc(meta) + '</p>' + (d.song ? '<p class="rc-info__song">Started from the song “' + esc(d.song.title) + '”.</p>' : '') +
-        '<div class="rc-info__row">' + (d.grown ? '' : '<button data-a="grow">Grow from here</button>') + (d.url ? '<a href="' + esc(d.url) + '" target="_blank" rel="noopener">Spotify ↗</a>' : '') +
+        '<div class="rc-info__row"><button data-a="openrec">Open record</button>' + (d.grown ? '' : '<button data-a="grow">Grow from here</button>') + (d.url ? '<a href="' + esc(d.url) + '" target="_blank" rel="noopener">Spotify ↗</a>' : '') +
         (d.deezer ? '<a href="' + esc(d.deezer) + '" target="_blank" rel="noopener">Deezer ↗</a>' : '') + '</div>' +
-        '<div class="rc-info__prev" id="rc-prev"></div>' + (d.kind === 'album' ? '<div class="rc-info__add" id="rc-add-room"></div>' : '');
+        '<div class="rc-info__prev" data-prev></div>' + (d.kind === 'album' ? '<div class="rc-info__add" data-add></div>' : '');
       loadPreview(b); if (d.kind === 'album') renderAdd(b);
     }
-    function stopPreview() { audio.pause(); playing = null; info.querySelectorAll('.rc-song button.on').forEach(function (x) { x.classList.remove('on'); x.textContent = '▶'; }); info.querySelectorAll('.rc-bar i').forEach(function (i) { i.style.width = '0'; }); }
+    function stopPreview() { audio.pause(); playing = null; host.querySelectorAll('.rc-song button.on').forEach(function (x) { x.classList.remove('on'); x.textContent = '▶'; }); host.querySelectorAll('.rc-bar i').forEach(function (i) { i.style.width = '0'; }); }
     audio.addEventListener('ended', stopPreview);
-    audio.addEventListener('timeupdate', function () { if (!playing || !audio.duration) return; var i = info.querySelector('.rc-song[data-i="' + playing.i + '"] .rc-bar i'); if (i) i.style.width = (audio.currentTime / audio.duration * 100) + '%'; });
+    audio.addEventListener('timeupdate', function () { if (!playing || !audio.duration) return; var i = activeRoot().querySelector('.rc-song[data-i="' + playing.i + '"] .rc-bar i'); if (i) i.style.width = (audio.currentTime / audio.duration * 100) + '%'; });
     window.addEventListener('pagehide', stopPreview);
 
     async function loadPreview(b) {
-      var d = b.data, box = info.querySelector('#rc-prev'); if (!box) return;
-      var key = d.kind + ':' + d.rid;
+      var d = b.data, key = d.kind + ':' + d.rid, boxes = function () { return panes().map(function (p) { return p.querySelector('[data-prev]'); }).filter(Boolean); };
       if (!previews[key]) {
-        box.innerHTML = '<h4>Listen</h4><p class="rc-info__msg">Finding songs…</p>';
+        boxes().forEach(function (box) { box.innerHTML = '<h4>Listen</h4><p class="rc-info__msg">Finding songs…</p>'; });
         var res; try { var r = await fetch('/api/connections/preview?' + new URLSearchParams({ kind: d.kind, id: d.rid })); res = await r.json(); if (!r.ok) res = { items: [], note: res.error || '' }; } catch (e) { res = { items: [], note: 'Could not load the songs.' }; }
         previews[key] = res;
       }
       if (sel !== b.id) return;
-      var pv = previews[key], items = pv.items || [], b2 = info.querySelector('#rc-prev'); if (!b2) return;
+      var pv = previews[key], items = pv.items || [];
       var mine = function (t) { return d.song && root.RoomAdd.fold(t.title) === root.RoomAdd.fold(d.song.title); };
-      b2.innerHTML = '<h4>Listen · 30 seconds each</h4>' + (items.length ? items.map(function (t, i) {
+      var html = '<h4>Listen · 30 seconds each</h4>' + (items.length ? items.map(function (t, i) {
         return '<div class="rc-song' + (mine(t) ? ' mine' : '') + '" data-i="' + i + '"><button data-a="play" data-i="' + i + '"' + (t.preview ? '' : ' disabled title="No preview for this one"') + '>▶</button><span><b>' + esc(t.title) + '</b><small>' + esc(t.sub || '') + '</small><div class="rc-bar"><i></i></div></span><small>' + (t.duration_sec ? clock(t.duration_sec) : '') + '</small></div>';
       }).join('') : '<p class="rc-info__msg">' + esc(pv.note || 'Nothing to hear.') + '</p>') + (pv.note && items.length ? '<p class="rc-info__msg">' + esc(pv.note) + '</p>' : '');
+      boxes().forEach(function (box) { box.innerHTML = html; });
+      if (playing && playing.id === b.id) { var pb = activeRoot().querySelector('.rc-song[data-i="' + playing.i + '"] button'); if (pb) { pb.classList.add('on'); pb.textContent = '❚❚'; } }
     }
     async function togglePlay(b, i) {
       var pv = previews[b.data.kind + ':' + b.data.rid], t = pv && pv.items && pv.items[i]; if (!t || !t.preview) return;
       if (playing && playing.id === b.id && playing.i === i) { stopPreview(); return; }
       stopPreview(); fetch('/api/seinnteoir/pause', { method: 'POST' }).catch(function () {});        // never play over the app's own player
       audio.src = t.preview; playing = { id: b.id, i: i };
-      var btn = info.querySelector('.rc-song[data-i="' + i + '"] button'); if (btn) { btn.classList.add('on'); btn.textContent = '❚❚'; }
+      var btn = activeRoot().querySelector('.rc-song[data-i="' + i + '"] button'); if (btn) { btn.classList.add('on'); btn.textContent = '❚❚'; }
       try { await audio.play(); } catch (e) { stopPreview(); say('The preview would not play.'); }
     }
 
-    function renderAdd(b) {
-      var box = info.querySelector('#rc-add-room'); if (!box) return;
+    function renderAdd(b) { panes().forEach(function (p) { var box = p.querySelector('[data-add]'); if (box) drawAdd(box, b); }); }
+    function drawAdd(box, b) {
       var a = addOf(b), d = b.data, link = '<a href="https://open.spotify.com/search/' + encodeURIComponent((d.sub + ' ' + d.name).trim()) + '/albums" target="_blank" rel="noopener">search Spotify</a>';
       if (a.state === 'idle') box.innerHTML = '<div class="rc-info__row"><button class="go" data-a="addstart">Add to My Room</button></div>';
       else if (a.state === 'finding') box.innerHTML = '<p>' + esc(waiting || 'Finding it on Spotify…') + '</p>';
@@ -244,9 +284,9 @@
         var m = a.match;
         box.innerHTML = '<h4>Add this to My Room?</h4><p><span class="rc-info__t">' + esc(m.title) + '</span><br>' + esc([m.subtitle, m.year, m.tracks ? m.tracks + ' songs' : ''].filter(Boolean).join(' · ')) +
           (a.whole ? '<br>Spotify would not list the songs, so it goes in as one record.' : '<br>' + a.items.length + ' songs.') + '</p>' +
-          '<select id="rc-g"><option value="">A new grúpa…</option>' + a.grupas.map(function (g) { return '<option value="' + g.id + '"' + (g.id === a.pick ? ' selected' : '') + '>' + esc(g.name) + (g.has ? ' (already has it)' : '') + '</option>'; }).join('') + '</select>' +
-          '<input type="text" id="rc-gn" value="' + esc(m.title) + '"' + (a.pick ? ' hidden' : '') + '><div class="rc-info__row"><button class="go" data-a="addgo">Add</button><button data-a="addno">Not this one</button></div>';
-        var g = box.querySelector('#rc-g'); if (g) g.onchange = function () { box.querySelector('#rc-gn').hidden = !!g.value; };
+          '<select class="rc-g"><option value="">A new grúpa…</option>' + a.grupas.map(function (g) { return '<option value="' + g.id + '"' + (g.id === a.pick ? ' selected' : '') + '>' + esc(g.name) + (g.has ? ' (already has it)' : '') + '</option>'; }).join('') + '</select>' +
+          '<input type="text" class="rc-gn" value="' + esc(m.title) + '"' + (a.pick ? ' hidden' : '') + '><div class="rc-info__row"><button class="go" data-a="addgo">Add</button><button data-a="addno">Not this one</button></div>';
+        var g = box.querySelector('.rc-g'); if (g) g.onchange = function () { box.querySelector('.rc-gn').hidden = !!g.value; };
       } else if (a.state === 'adding') box.innerHTML = '<p>Adding…</p>';
       else if (a.state === 'done') box.innerHTML = '<p>' + (a.added ? 'Added ' + a.added + (a.added === 1 ? ' song' : ' songs') + ' to My Room.' : 'Already in My Room.') + ' <a href="/room?grupa=' + a.grupaId + '">Open it →</a></p>';
     }
@@ -259,20 +299,86 @@
       if (sel === b.id) renderAdd(b);
     }
     async function addGo(b) {
-      var a = addOf(b), gs = info.querySelector('#rc-g'), gid = gs ? +gs.value : 0, name = (info.querySelector('#rc-gn') || {}).value || a.match.title;
+      var a = addOf(b), r0 = activeRoot(), gs = r0.querySelector('.rc-g'), gid = gs ? +gs.value : 0, name = (r0.querySelector('.rc-gn') || {}).value || a.match.title;
       a.state = 'adding'; renderAdd(b);
       var r = await room.add({ items: a.items, grupaId: gid || 0, name: name, note: 'From the wall' });
       if (r.error) Object.assign(a, { state: 'error', msg: r.error }); else Object.assign(a, { state: 'done', grupaId: r.grupaId, added: r.added });
       if (sel === b.id) renderAdd(b);
     }
-    info.addEventListener('click', function (e) {
-      var btn = e.target.closest('button'); if (!btn) return;
-      var b = wall.blocks.find(function (x) { return x.id === sel; }), act = btn.dataset.a;
+
+    // ── the record: a page for one node, in three columns ──
+    // left: what is joined to it (your words, quotes, links, pictures, videos) and the music near it; middle: the cover; right: the facts, the songs, and keeping it
+    function mineHtml(it) {
+      var d = it.data || {}, body;
+      if (it.type === 'quote') body = '<p class="rc-rec__q">“' + esc(d.text || '') + '”</p><p class="rc-rec__by">' + esc([d.who, d.source].filter(Boolean).join(', ')) + (safeUrl(d.url) ? ' <button data-a="openurl" data-url="' + esc(d.url) + '">[ open ]</button>' : '') + '</p>';
+      else if (it.type === 'text') body = (d.heading ? '<p class="rc-rec__h">' + esc(d.heading) + '</p>' : '') + (d.body ? '<p>' + esc(d.body) + '</p>' : '');
+      else if (it.type === 'image') body = /^(https?:\/\/|\/)/.test(d.src || '') ? '<img src="' + esc(d.src) + '" alt="' + esc(d.alt || '') + '">' : '<p>a picture</p>';
+      else if (it.type === 'mix' || it.type === 'link') body = '<p class="rc-rec__h">' + esc(d.title || d.url || 'a link') + '</p>' + (safeUrl(d.url) ? '<button data-a="openurl" data-url="' + esc(d.url) + '">[ open ]</button>' : '');
+      else body = '<p>' + esc(it.type) + '</p>';
+      return '<article class="rc-rec__item"><span class="rc-rec__no">' + pad(it.n) + (it.line ? ' · ' + esc(it.line) : '') + '</span>' + body + '</article>';
+    }
+    function renderRecord(b) {
+      var m = recordModel(b, wall.blocks, wall.links), d = b.data;
+      rec.innerHTML = '<div class="rc-rec__top"><span class="rc-rec__num">' + pad(m.n) + '</span><span class="rc-rec__nav"><button data-a="recprev">[ Prev ]</button><button data-a="recnext">[ Next ]</button><button data-a="recclose">[ Close ]</button></span></div>' +
+        '<div class="rc-rec__cols">' +
+        '<section class="rc-rec__left"><h3>Linked' + (m.mine.length ? ' <i>' + m.mine.length + '</i>' : '') + '</h3>' +
+          (m.mine.length ? m.mine.map(mineHtml).join('') : '<p class="rc-rec__none">Nothing of yours is joined to this yet. Draw a line to it from a quote, a note or a video, or add a note here.</p>') +
+          '<button class="rc-rec__add" data-a="note">[ + Note ]</button><div class="rc-rec__note" hidden><textarea rows="4" maxlength="2000" placeholder="what this makes you think of"></textarea><button data-a="notesave">[ Save ]</button></div>' +
+          (m.near.length ? '<h3>Near <i>' + m.near.length + '</i></h3>' + m.near.map(function (n) { return '<button class="rc-rec__near" data-a="jump" data-id="' + esc(n.id) + '"><span>' + pad(n.n) + '</span>' + esc(n.name) + '</button>'; }).join('') : '') + '</section>' +
+        '<section class="rc-rec__mid">' + (m.image ? '<img src="' + esc(m.image) + '" alt="' + esc(m.title) + '">' : '<div class="rc-rec__ph">' + esc((m.title || '?').charAt(0)) + '</div>') + '</section>' +
+        '<section class="rc-rec__right"><h2>' + esc(m.title) + '</h2>' + (m.song ? '<p class="rc-rec__song">Started from the song “' + esc(m.song.title) + '”.</p>' : '') +
+          '<dl class="rc-rec__facts">' + m.facts.map(function (f) { return '<div><dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd></div>'; }).join('') + '</dl>' +
+          '<div class="rc-rec__prev" data-prev></div>' + (d.kind === 'album' ? '<div class="rc-rec__addroom" data-add></div>' : '') +
+          '<div class="rc-rec__links">' + (m.spotify ? '<a href="' + esc(m.spotify) + '" target="_blank" rel="noopener">[ Spotify ↗ ]</a>' : '') + (m.deezer ? '<a href="' + esc(m.deezer) + '" target="_blank" rel="noopener">[ Deezer ↗ ]</a>' : '') + (d.grown ? '' : '<button data-a="grow">[ Grow ]</button>') + '</div></section></div>';
+      loadPreview(b); if (d.kind === 'album') renderAdd(b);
+    }
+    function openRecord(b) {
+      if (!nodeBlock(b) || isTag(b.data.kind)) return;
+      recId = b.id; stopPreview(); wall.select(b.id);                                  // (selecting shows the quick card; the page replaces it)
+      info.classList.remove('on'); rec.classList.add('on'); renderRecord(b); rec.scrollTop = 0;
+    }
+    function closeRecord() { var b = blockById(recId); rec.classList.remove('on'); rec.innerHTML = ''; recId = null; stopPreview(); if (b && blockById(sel)) showInfo(b); }
+    function stepTo(dir) {
+      var next = blockById(stepRecord(recordOrder(wall.blocks), recId, dir)); if (!next) return;
+      var c = centreOf(next); wall.panTo(c.x, c.y); openRecord(next);
+    }
+    function saveNote() {
+      var ta = rec.querySelector('.rc-rec__note textarea'), b = blockById(recId), text = ta && ta.value.trim(); if (!text || !b) return;
+      var c = centreOf(b), rects = wall.blocks.map(function (x) { return { x: x.x, y: x.y, w: x.w, h: x.h }; });
+      var spot = freeSpot(rects, { x: c.x + 320, y: c.y }, { w: 340, h: 200 }, 30) || { x: c.x + 320, y: c.y };
+      var nb = wall.addNode('text', { heading: '', body: text.slice(0, 2000) }, spot, 0, { w: 320, h: 160 });
+      wall.setLinks(LinkOps.add(wall.links, b.id, nb.id, 'mine').links); wall.changed(); renderRecord(b);
+    }
+
+    function onAct(e) {
+      var btn = e.target.closest('button'); if (!btn || !btn.dataset.a) return;
+      var act = btn.dataset.a, b = blockById(sel);
       if (act === 'close') { wall.select(null); return; }
+      if (act === 'recclose') { closeRecord(); return; }
+      if (act === 'recprev' || act === 'recnext') { stepTo(act === 'recnext' ? 1 : -1); return; }
+      if (act === 'jump') { var t = blockById(btn.dataset.id); if (t) { var c = centreOf(t); wall.panTo(c.x, c.y); openRecord(t); } return; }
+      if (act === 'note') { var nb = rec.querySelector('.rc-rec__note'); if (nb) { nb.hidden = !nb.hidden; if (!nb.hidden) nb.querySelector('textarea').focus(); } return; }
+      if (act === 'notesave') { saveNote(); return; }
+      if (act === 'openurl') { var u = safeUrl(btn.dataset.url); if (u) fetch('/api/open-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: u }) }).catch(function () {}); return; }
       if (!b) return;
-      if (act === 'grow') grow(b); else if (act === 'play') togglePlay(b, +btn.dataset.i);
+      if (act === 'openrec') openRecord(b);
+      else if (act === 'grow') grow(b).then(function () { if (rec.classList.contains('on') && recId === b.id) renderRecord(b); });
+      else if (act === 'play') togglePlay(b, +btn.dataset.i);
       else if (act === 'addstart') addStart(b); else if (act === 'addgo') addGo(b); else if (act === 'addno') { adds[b.id] = { state: 'idle' }; renderAdd(b); }
-    });
+    }
+    info.addEventListener('click', onAct); rec.addEventListener('click', onAct);
+    wall.on('dblclick', function (b) { if (nodeBlock(b) && !isTag(b.data.kind)) openRecord(b); });
+    // Esc closes the record (and nothing else); the arrows step between records; Enter opens the quick card's record
+    window.addEventListener('keydown', function (e) {
+      if (!host.classList.contains('on')) return;
+      var typing = e.target.matches && e.target.matches('input, textarea, select, [contenteditable]');
+      if (rec.classList.contains('on')) {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); closeRecord(); }
+        else if (!typing && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); stepTo(e.key === 'ArrowRight' ? 1 : -1); }
+      } else if (!typing && e.key === 'Enter' && info.classList.contains('on') && !(e.target.closest && e.target.closest('button, a'))) {
+        var b = blockById(sel); if (b) { e.preventDefault(); openRecord(b); }
+      }
+    }, true);
 
     // ── starting: the song playing now, a liked song, an album you type ──
     var liked = [], likedMore = true, likedBusy = false, hits = null, startAt = null;
