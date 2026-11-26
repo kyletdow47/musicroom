@@ -1,10 +1,20 @@
 /* room_canvas.css — the user's own wall of blocks in their room.
    Reads the theme tokens (--bg --text --muted --border --accent --gold --sheet)
    and the app's type (--f-display for headings, --f-grotesk for chrome). */
-.rc{ position:fixed; inset:0; z-index:8; overflow:auto; background:var(--bg); display:none;
+.rc{ position:fixed; inset:0; z-index:8; overflow:hidden; background:var(--bg); display:none;
   font-family:var(--f-grotesk, Inter, system-ui, sans-serif); color:var(--text); -webkit-font-smoothing:antialiased; }
 .rc.on{ display:block; }
-.rc-stage{ position:relative; min-height:100%; padding-top:72px; }
+/* the wall is a world seen through a camera: the view is the window (it has the vanishing point), the stage is the
+   world (moved and scaled to pan and zoom), and each block sits on its own layer in front of or behind the page */
+.rc-view{ position:absolute; inset:0; overflow:hidden; cursor:grab; touch-action:none; user-select:none;
+  background-image:radial-gradient(circle, var(--border) 1px, transparent 1.4px); }
+.rc-view.pan{ cursor:grabbing; }
+.rc-stage{ position:absolute; left:0; top:0; width:0; height:0; transform-origin:0 0; transform-style:preserve-3d; }
+.rc-hud{ position:absolute; left:14px; top:72px; z-index:30; display:flex; gap:6px; }
+.rc-hud button{ appearance:none; border:1px solid var(--border); background:var(--bg); color:var(--text); font:inherit; font-family:var(--f-mono); font-size:.66rem;
+  letter-spacing:.1em; text-transform:uppercase; padding:7px 10px; border-radius:0; cursor:pointer; }
+.rc-hud button:hover{ border-color:var(--text); }
+.rc-hud button.on{ background:var(--text); color:var(--bg); border-color:var(--text); }
 .rc-empty{ position:absolute; left:50%; top:42%; transform:translate(-50%,-50%); text-align:center; max-width:420px; pointer-events:none; }
 .rc-empty__t{ font-family:var(--f-display); font-size:1.9rem; color:var(--text); }
 .rc-empty__b{ margin-top:8px; font-size:.86rem; color:var(--muted); line-height:1.5; }

@@ -168,6 +168,58 @@ window.MRRoomCanvas = (function () {
   }
   function playAll(items) { if (window.Seinnteoir) window.Seinnteoir.playAll(items); }
 
+  // ── the camera ───────────────────────────────────────────────────────────
+  // The wall is a world with a camera: pan, pinch-zoom, and depth. A block keeps its x, y, w, h (so a wall saved
+  // before this loads exactly as it was) and gains a layer `d` from -3 (far) to +3 (near). Farther blocks draw
+  // smaller and slide less when the view shifts; nearer ones the opposite. That is plain perspective: the view has a
+  // vanishing point, and each block sits d * 120px in front of or behind the page. All of it is pure maths so it can
+  // be tested: cam = { x, y, k, ox, oy, depth } — x/y the world's offset on screen, k its zoom, (ox, oy) the vanishing point.
+  const PERSP = 1400, DEPTH_STEP = 120, DEPTH_MAX = 3, K_MIN = 0.15, K_MAX = 2.5;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const depthOf = b => { const d = Number(b && b.d); return isFinite(d) ? clamp(Math.round(d), -DEPTH_MAX, DEPTH_MAX) : 0; };
+  // where a block sits in front of the page; the tiny rank term keeps blocks on one layer stacked in their order
+  const zOf = (b, rank) => depthOf(b) * DEPTH_STEP + (rank || 0) * 0.4;
+  const scaleAt = (z, on) => (on ? PERSP / (PERSP - z) : 1);
+  function toScreen(cam, wx, wy, z) {
+    const s = scaleAt(z, cam.depth), X = cam.x + cam.k * wx, Y = cam.y + cam.k * wy;
+    return { x: cam.ox + (X - cam.ox) * s, y: cam.oy + (Y - cam.oy) * s };
+  }
+  function toWorld(cam, sx, sy, z) {
+    const s = scaleAt(z, cam.depth), X = cam.ox + (sx - cam.ox) / s, Y = cam.oy + (sy - cam.oy) / s;
+    return { x: (X - cam.x) / cam.k, y: (Y - cam.y) / cam.k };
+  }
+  // zoom by factor f keeping the point under (sx, sy) where it is (the page plane, z = 0)
+  function zoomAt(cam, f, sx, sy) {
+    const k = clamp(cam.k * f, K_MIN, K_MAX), r = k / cam.k;
+    return Object.assign({}, cam, { k, x: sx - (sx - cam.x) * r, y: sy - (sy - cam.y) * r });
+  }
+  // a camera that shows every block, with room round the edge and clear of the top bar. With depth on, a near block
+  // is drawn larger and a far one smaller than its flat size, so the fit is measured on where the corners really land.
+  function fitCam(blocks, W, H, cam) {
+    const bs = (blocks || []).filter(b => b && isFinite(b.x) && isFinite(b.y) && isFinite(b.w) && isFinite(b.h));
+    const top = 110, pad = 48, availW = Math.max(200, W - pad * 2), availH = Math.max(160, H - top - pad - 70);
+    if (!bs.length) return Object.assign({}, cam, { k: 1, x: pad, y: top + 24 });
+    const rank = {}; bs.slice().sort((a, b) => (a.z || 0) - (b.z || 0)).forEach((b, i) => { rank[b.id] = i; });
+    const x0 = Math.min(...bs.map(b => b.x)), y0 = Math.min(...bs.map(b => b.y)), x1 = Math.max(...bs.map(b => b.x + b.w)), y1 = Math.max(...bs.map(b => b.y + b.h));
+    let c = Object.assign({}, cam);                      // (its vanishing point is the real one, so what is measured is what is drawn)
+    c.k = clamp(Math.min(availW / Math.max(1, x1 - x0), availH / Math.max(1, y1 - y0)), K_MIN, 1.1);
+    c.x = pad + (availW - (x1 - x0) * c.k) / 2 - x0 * c.k; c.y = top + (availH - (y1 - y0) * c.k) / 2 - y0 * c.k;
+    if (c.depth) {                                       // measure the drawn corners and settle on a zoom that fits them
+      for (let i = 0; i < 4; i++) {
+        let mx0 = Infinity, my0 = Infinity, mx1 = -Infinity, my1 = -Infinity;
+        bs.forEach(b => { const z = zOf(b, rank[b.id]); [[b.x, b.y], [b.x + b.w, b.y + b.h]].forEach(([wx, wy]) => { const p = toScreen(c, wx, wy, z); mx0 = Math.min(mx0, p.x); my0 = Math.min(my0, p.y); mx1 = Math.max(mx1, p.x); my1 = Math.max(my1, p.y); }); });
+        const f = Math.min(availW / Math.max(1, mx1 - mx0), availH / Math.max(1, my1 - my0));
+        c.k = clamp(c.k * f, K_MIN, 1.1);
+        let nx0 = Infinity, ny0 = Infinity, nx1 = -Infinity, ny1 = -Infinity;
+        bs.forEach(b => { const z = zOf(b, rank[b.id]); [[b.x, b.y], [b.x + b.w, b.y + b.h]].forEach(([wx, wy]) => { const p = toScreen(c, wx, wy, z); nx0 = Math.min(nx0, p.x); ny0 = Math.min(ny0, p.y); nx1 = Math.max(nx1, p.x); ny1 = Math.max(ny1, p.y); }); });
+        c.x += (pad + availW / 2) - (nx0 + nx1) / 2; c.y += (top + availH / 2) - (ny0 + ny1) / 2;
+      }
+    }
+    return { x: c.x, y: c.y, k: c.k, ox: cam.ox, oy: cam.oy, depth: cam.depth };
+  }
+  // a wheel turn in pixels, whatever unit the browser reports it in
+  const wheelPx = (v, mode, page) => (mode === 1 ? v * 16 : mode === 2 ? v * (page || 800) : v);
+
   // ── mount ────────────────────────────────────────────────────────────────
   function mount(host, opts) {
     opts = opts || {};
@@ -178,7 +230,11 @@ window.MRRoomCanvas = (function () {
 
     host.classList.add('rc');
     host.innerHTML = `
-      <div class="rc-stage" id="rc-stage"></div>
+      <div class="rc-view" id="rc-view"><div class="rc-stage" id="rc-stage"></div></div>
+      <div class="rc-hud" id="rc-hud">
+        <button data-hud="fit" title="Fit everything on screen">Fit</button><button data-hud="in" title="Zoom in">+</button><button data-hud="out" title="Zoom out">−</button>
+        <button data-hud="depth" id="rc-depth" title="Depth: blocks sit on layers, and the view looks around as you move">3D</button>
+      </div>
       <div class="rc-empty" id="rc-empty"><div class="rc-empty__t">Nothing here yet.</div><div class="rc-empty__b">Make a block, drag it where you want it, pull its corner to size it, fill it.</div></div>
       <div class="rc-addwrap">
         <span class="rc-status" id="rc-status"></span>
@@ -186,10 +242,40 @@ window.MRRoomCanvas = (function () {
         <div class="rc-addmenu" id="rc-addmenu"></div>
       </div>
       <div class="rc-sheet" id="rc-sheet"></div>`;
-    const stage = host.querySelector('#rc-stage'), empty = host.querySelector('#rc-empty');
+    const view = host.querySelector('#rc-view'), stage = host.querySelector('#rc-stage'), empty = host.querySelector('#rc-empty');
     const addBtn = host.querySelector('#rc-add'), addMenu = host.querySelector('#rc-addmenu');
     const sheet = host.querySelector('#rc-sheet'), status = host.querySelector('#rc-status');
     addMenu.innerHTML = Object.keys(TYPES).filter(t => !TYPES[t].keepOnly).map(t => `<button data-type="${t}"><b>${esc(TYPES[t].label)}</b><small>${esc(TYPES[t].hint)}</small></button>`).join('');
+
+    // ── the camera in use ──
+    const reduced = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
+    const camKey = 'rc_cam_' + placeId, depthKey = 'rc_depth';
+    let depthOn = true; try { depthOn = localStorage.getItem(depthKey) !== '0'; } catch (_) {}
+    const cam = { x: 0, y: 0, k: 1, ox: 0, oy: 0, depth: depthOn };
+    let rankOf = {}, lookTo = null, lookRaf = 0, camSaveT = null, camSet = false;
+    const viewSize = () => { const r = view.getBoundingClientRect(); return { W: r.width || innerWidth, H: r.height || innerHeight, l: r.left, t: r.top }; };
+    function applyCam(glide) {
+      stage.style.transform = `translate(${cam.x.toFixed(2)}px,${cam.y.toFixed(2)}px) scale(${cam.k.toFixed(4)})`;
+      view.style.perspective = cam.depth ? PERSP + 'px' : 'none';
+      view.style.perspectiveOrigin = cam.ox.toFixed(1) + 'px ' + cam.oy.toFixed(1) + 'px';
+      view.classList.toggle('flat', !cam.depth);
+      const g = 48 * cam.k;                                              // the dotted ground moves with the page plane
+      view.style.backgroundSize = g + 'px ' + g + 'px';
+      view.style.backgroundPosition = (cam.x % g) + 'px ' + (cam.y % g) + 'px';
+      const d = host.querySelector('#rc-depth'); if (d) d.classList.toggle('on', cam.depth);
+      clearTimeout(camSaveT); camSaveT = setTimeout(() => { try { localStorage.setItem(camKey, JSON.stringify({ x: cam.x, y: cam.y, k: cam.k })); } catch (_) {} }, 400);
+    }
+    function centreOrigin() { const v = viewSize(); cam.ox = v.W / 2; cam.oy = v.H / 2; lookTo = null; }
+    function fitNow(glide) { const v = viewSize(); Object.assign(cam, fitCam(blocks, v.W, v.H, cam)); applyCam(glide); }
+    function restoreCam() {
+      const v = viewSize(); centreOrigin();
+      let saved = null; try { saved = JSON.parse(localStorage.getItem(camKey) || 'null'); } catch (_) {}
+      if (saved && isFinite(saved.x) && isFinite(saved.y) && isFinite(saved.k) && blocks.length) { cam.x = saved.x; cam.y = saved.y; cam.k = clamp(saved.k, K_MIN, K_MAX); applyCam(); }
+      else fitNow();
+      camSet = true;
+    }
+    const worldAtPointer = (e, z) => { const v = viewSize(); return toWorld(cam, e.clientX - v.l, e.clientY - v.t, z || 0); };
+    const viewCentreWorld = () => { const v = viewSize(); return toWorld(cam, v.W / 2, v.H / 2, 0); };
 
     // ── persistence ──
     async function load() {
@@ -197,7 +283,7 @@ window.MRRoomCanvas = (function () {
         const d = await (await fetch(`/api/room/canvas/${placeId}`)).json();
         blocks = Array.isArray(d.blocks) ? d.blocks : [];
       } catch (_) { blocks = []; }
-      loaded = true; renderAll();
+      loaded = true; renderAll(); if (!camSet) restoreCam();
     }
     function dirty() { status.textContent = '…'; clearTimeout(saveT); saveT = setTimeout(save, 600); }
     async function save() {
@@ -212,9 +298,9 @@ window.MRRoomCanvas = (function () {
     const byId = id => blocks.find(b => b.id === id);
     function addBlock(type, at) {
       const T = TYPES[type]; if (!T) return;
-      const r = host.getBoundingClientRect();
-      const x = at ? at.x : snap(host.scrollLeft + Math.max(24, (r.width - T.w) / 2) + (blocks.length % 5) * 24);
-      const y = at ? at.y : snap(host.scrollTop + 120 + (blocks.length % 5) * 24);
+      const c = viewCentreWorld();
+      const x = at ? snap(at.x - T.w / 2) : snap(c.x - T.w / 2 + (blocks.length % 5) * 24);          // a right-click puts the block's middle on the click
+      const y = at ? snap(at.y - T.h / 2) : snap(c.y - T.h / 2 + (blocks.length % 5) * 24);
       const b = { id: uid(), type, x, y, w: T.w, h: T.h, z: blocks.length + 1, data: {} };
       blocks.push(b); renderAll(); select(b.id); dirty();
       if (type !== 'text') openSheet(b.id); else { const h = stage.querySelector(`[data-id="${b.id}"] [data-k="heading"]`); if (h) h.focus(); }
@@ -236,16 +322,21 @@ window.MRRoomCanvas = (function () {
 
     // ── render ──
     function renderAll() {
+      rankOf = {}; blocks.slice().sort((a, b) => a.z - b.z).forEach((b, i) => { rankOf[b.id] = i; });
       const keep = new Set();
       blocks.forEach(b => { keep.add(b.id); let el = stage.querySelector(`[data-id="${b.id}"]`); if (!el) { el = makeEl(b); stage.appendChild(el); } place(b, el); if (el.dataset.sig !== sig(b)) { el.dataset.sig = sig(b); fillBody(b, el); } });
       stage.querySelectorAll('.rc-block').forEach(el => { if (!keep.has(el.dataset.id)) el.remove(); });
       empty.style.display = blocks.length ? 'none' : '';
-      let maxB = 0, maxR = 0; blocks.forEach(b => { maxB = Math.max(maxB, b.y + b.h); maxR = Math.max(maxR, b.x + b.w); });
-      stage.style.minHeight = (maxB + 240) + 'px'; stage.style.minWidth = (maxR + 80) + 'px';
       select(sel);
     }
     const sig = b => b.type + '|' + JSON.stringify(b.data);
-    function place(b, el) { el.style.left = b.x + 'px'; el.style.top = b.y + 'px'; el.style.width = b.w + 'px'; el.style.height = b.h + 'px'; el.style.zIndex = String(b.z); }
+    function place(b, el, lift) {
+      el.style.left = b.x + 'px'; el.style.top = b.y + 'px'; el.style.width = b.w + 'px'; el.style.height = b.h + 'px'; el.style.zIndex = String(b.z);
+      const d = depthOf(b);
+      el.style.transform = cam.depth ? `translateZ(${(zOf(b, rankOf[b.id]) + (lift ? 40 : 0)).toFixed(1)}px)` : '';
+      el.style.opacity = cam.depth && d < 0 ? String(1 + d * 0.07) : '';          // far things are a little paler: air between
+      const t = el.querySelector('.rc-tools__type'); if (t) t.textContent = TYPES[b.type].label + (d ? (d > 0 ? ' · near ' : ' · far ') + Math.abs(d) : '');
+    }
     function makeEl(b) {
       const el = document.createElement('div');
       el.className = `rc-block rc-block--${b.type}`; el.dataset.id = b.id;
@@ -254,6 +345,7 @@ window.MRRoomCanvas = (function () {
           <span class="rc-tools__type">${esc(TYPES[b.type].label)}</span>
           ${b.type !== 'text' && b.type !== 'web' ? '<button data-act="fill" title="Fill this block">fill</button>' : ''}
           <button data-act="down" title="Send back">↓</button><button data-act="up" title="Bring forward">↑</button>
+          <button data-act="far" title="Push it farther away: smaller, and it moves less">far</button><button data-act="near" title="Pull it nearer: larger, and it moves more">near</button>
           <button data-act="del" title="Remove this block">✕</button>
         </div>
         <div class="rc-body"></div>
@@ -447,20 +539,26 @@ window.MRRoomCanvas = (function () {
 
     // ── events: add menu ──
     addBtn.onclick = e => { e.stopPropagation(); addMenu.classList.toggle('on'); };
-    addMenu.onclick = e => { const t = e.target.closest('[data-type]'); if (t) { addMenu.classList.remove('on'); addBlock(t.dataset.type); } };
-    stage.addEventListener('contextmenu', e => {
-      if (e.target !== stage) return; e.preventDefault();
-      const r = stage.getBoundingClientRect();
-      addMenu.classList.add('on'); addMenu.dataset.x = snap(e.clientX - r.left); addMenu.dataset.y = snap(e.clientY - r.top);
+    // One handler for the + menu: from the button the block lands where you are looking; from a right-click, centred on the click.
+    // (Two handlers used to run here, and the right-click one moved the PREVIOUS block to the click before the new one was made.)
+    addMenu.addEventListener('click', e => {
+      const t = e.target.closest('[data-type]'); if (!t) return;
+      const at = addMenu.classList.contains('at') ? { x: +addMenu.dataset.x, y: +addMenu.dataset.y } : null;
+      addMenu.classList.remove('on', 'at'); addMenu.style.left = ''; addMenu.style.top = '';
+      addBlock(t.dataset.type, at);
+    });
+    view.addEventListener('contextmenu', e => {
+      if (e.target !== view && e.target !== stage) return; e.preventDefault();
+      const w = worldAtPointer(e, 0);
+      addMenu.classList.add('on'); addMenu.dataset.x = snap(w.x); addMenu.dataset.y = snap(w.y);
       addMenu.style.left = Math.min(e.clientX, innerWidth - 260) + 'px'; addMenu.style.top = Math.min(e.clientY, innerHeight - 320) + 'px'; addMenu.classList.add('at');
     });
-    addMenu.addEventListener('click', e => { const t = e.target.closest('[data-type]'); if (t && addMenu.classList.contains('at')) { const x = +addMenu.dataset.x, y = +addMenu.dataset.y; addMenu.classList.remove('at'); addMenu.style.left = ''; addMenu.style.top = ''; const last = blocks[blocks.length - 1]; if (last) { last.x = x; last.y = y; renderAll(); dirty(); positionSheet(last); } } }, true);
     document.addEventListener('click', e => { if (!addMenu.contains(e.target) && e.target !== addBtn) { addMenu.classList.remove('on', 'at'); addMenu.style.left = ''; addMenu.style.top = ''; } });
 
     // ── events: blocks (select · tools · inline text · play) ──
     stage.addEventListener('click', e => {
       const el = e.target.closest('.rc-block');
-      if (!el) { if (e.target === stage) { select(null); closeSheet(); } return; }
+      if (!el) return;
       const b = byId(el.dataset.id); if (!b) return;
       select(b.id);
       const act = e.target.closest('[data-act]'); if (!act) return;
@@ -468,6 +566,7 @@ window.MRRoomCanvas = (function () {
       if (a === 'del') { if (confirm('Remove this block?')) removeBlock(b.id); }
       else if (a === 'up') bump(b.id, +1);
       else if (a === 'down') bump(b.id, -1);
+      else if (a === 'far' || a === 'near') { b.d = clamp(depthOf(b) + (a === 'near' ? 1 : -1), -DEPTH_MAX, DEPTH_MAX); renderAll(); dirty(); }
       else if (a === 'fill') openSheet(b.id);
       else if (a === 'play') playNow(toItem(b.data.track));
       else if (a === 'cue') { cue([toItem(b.data.track)], false); flash(act, '✓'); }
@@ -500,26 +599,109 @@ window.MRRoomCanvas = (function () {
     stage.addEventListener('dragleave', e => { const el = e.target.closest('.rc-block--image'); if (el) el.classList.remove('drop'); });
     stage.addEventListener('drop', e => { const el = e.target.closest('.rc-block--image'); if (!el) return; e.preventDefault(); el.classList.remove('drop'); const b = byId(el.dataset.id); const f = e.dataTransfer.files && e.dataTransfer.files[0]; if (b && f) uploadImage(b, f); });
 
-    // ── drag + resize (pointer events; a click under 4px stays a click) ──
-    let drag = null;
+    // ── moving around: drag the background to pan, two fingers / scroll to pan, pinch to zoom ──
+    let drag = null, panning = null, pinch = null;
+    const fingers = new Map();
+    // a block's own scroll (a playlist's rows, a long quote) keeps its wheel; everywhere else a wheel pans
+    function scrollsUnder(e) {
+      for (let n = e.target; n && n !== view; n = n.parentElement) {
+        const o = getComputedStyle(n).overflowY;
+        if ((o === 'auto' || o === 'scroll') && n.scrollHeight > n.clientHeight + 1) {
+          const up = e.deltaY < 0; if ((up && n.scrollTop > 0) || (!up && n.scrollTop + n.clientHeight < n.scrollHeight - 1)) return true;
+        }
+      }
+      return false;
+    }
+    view.addEventListener('wheel', e => {
+      const v = viewSize();
+      if (e.ctrlKey) {                                  // a trackpad pinch arrives as ctrl + wheel
+        e.preventDefault(); Object.assign(cam, zoomAt(cam, Math.exp(-wheelPx(e.deltaY, e.deltaMode, v.H) * 0.012), e.clientX - v.l, e.clientY - v.t)); applyCam(); return;
+      }
+      if (scrollsUnder(e)) return;
+      e.preventDefault(); cam.x -= wheelPx(e.deltaX, e.deltaMode, v.W); cam.y -= wheelPx(e.deltaY, e.deltaMode, v.H); applyCam();
+    }, { passive: false });
+    let gScale = 1;                                     // Safari and the app: pinch arrives as gesture events
+    view.addEventListener('gesturestart', e => { e.preventDefault(); gScale = 1; });
+    view.addEventListener('gesturechange', e => { e.preventDefault(); const v = viewSize(), f = e.scale / gScale; gScale = e.scale; Object.assign(cam, zoomAt(cam, f, e.clientX - v.l, e.clientY - v.t)); applyCam(); });
+    view.addEventListener('gestureend', e => e.preventDefault());
+
+    // the look-around: with depth on, the vanishing point drifts a little toward the pointer, so layers slide past each other
+    function look(e) {
+      if (!cam.depth || reduced || drag || panning || pinch) return;
+      const a = document.activeElement; if (a && a.matches && a.matches('input, textarea, [contenteditable]')) return;
+      const v = viewSize(); lookTo = { x: v.W / 2 + (e.clientX - v.l - v.W / 2) * 0.16, y: v.H / 2 + (e.clientY - v.t - v.H / 2) * 0.16 };
+      if (!lookRaf) lookRaf = requestAnimationFrame(lookStep);
+    }
+    function lookStep() {
+      lookRaf = 0; if (!lookTo || drag || panning || pinch) return;
+      const dx = lookTo.x - cam.ox, dy = lookTo.y - cam.oy; if (Math.abs(dx) < 0.2 && Math.abs(dy) < 0.2) return;
+      cam.ox += dx * 0.12; cam.oy += dy * 0.12; applyCam(); lookRaf = requestAnimationFrame(lookStep);
+    }
+    view.addEventListener('pointerleave', () => { if (!drag && !panning) { const v = viewSize(); lookTo = { x: v.W / 2, y: v.H / 2 }; if (!lookRaf) lookRaf = requestAnimationFrame(lookStep); } });
+
+    view.addEventListener('pointerdown', e => {
+      if (e.pointerType === 'touch') {
+        fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (fingers.size === 2) { const [a, b] = [...fingers.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) }; drag = null; panning = null; view.classList.remove('pan'); return; }
+      }
+      if (e.target.closest('.rc-block')) return;
+      if (e.button !== 0 && e.button !== 1) return;
+      lookTo = null;
+      panning = { sx: e.clientX, sy: e.clientY, cx: cam.x, cy: cam.y, moved: false };
+      view.classList.add('pan'); view.setPointerCapture(e.pointerId); e.preventDefault();
+    });
+    view.addEventListener('pointermove', e => {
+      if (e.pointerType === 'touch' && fingers.has(e.pointerId)) {
+        fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (pinch && fingers.size === 2) {
+          const [a, b] = [...fingers.values()], d = Math.hypot(a.x - b.x, a.y - b.y), v = viewSize();
+          Object.assign(cam, zoomAt(cam, d / pinch.d, (a.x + b.x) / 2 - v.l, (a.y + b.y) / 2 - v.t)); pinch.d = d; applyCam(); return;
+        }
+      }
+      if (panning) {
+        const dx = e.clientX - panning.sx, dy = e.clientY - panning.sy;
+        if (!panning.moved && Math.hypot(dx, dy) < 4) return;
+        panning.moved = true; cam.x = panning.cx + dx; cam.y = panning.cy + dy; applyCam();
+      } else look(e);
+    });
+    const endPan = e => {
+      fingers.delete(e.pointerId); if (fingers.size < 2) pinch = null;
+      if (!panning) return; const p = panning; panning = null; view.classList.remove('pan');
+      if (!p.moved) { select(null); closeSheet(); }
+    };
+    view.addEventListener('pointerup', endPan); view.addEventListener('pointercancel', endPan);
+
+    host.querySelector('#rc-hud').addEventListener('click', e => {
+      const b = e.target.closest('[data-hud]'); if (!b) return; const v = viewSize(), h = b.dataset.hud;
+      if (h === 'fit') fitNow(true);
+      else if (h === 'in' || h === 'out') { Object.assign(cam, zoomAt(cam, h === 'in' ? 1.25 : 0.8, v.W / 2, v.H / 2)); applyCam(); }
+      else if (h === 'depth') {
+        cam.depth = !cam.depth; try { localStorage.setItem(depthKey, cam.depth ? '1' : '0'); } catch (_) {}
+        centreOrigin(); renderAll(); applyCam();
+      }
+    });
+
+    // ── drag + resize a block (pointer events; a click under 4px stays a click) ──
+    // The pointer is turned into a place on the block's own layer, so a block that sits nearer or farther still follows the hand exactly.
     stage.addEventListener('pointerdown', e => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || pinch) return;
       const el = e.target.closest('.rc-block'); if (!el) return;
       const b = byId(el.dataset.id); if (!b) return;
       const rz = e.target.closest('.rc-rz');
       if (!rz && e.target.closest('[contenteditable], input, button, a, iframe, select, textarea, img[data-act], .rc-pl__rows')) return;
-      drag = { b, el, mode: rz ? rz.className.replace(/.*rc-rz--(\w+).*/, '$1') : 'move', sx: e.clientX, sy: e.clientY, ox: b.x, oy: b.y, ow: b.w, oh: b.h, moved: false, z0: b.z };
-      el.setPointerCapture(e.pointerId); el.classList.add('live'); b.z = 9999; el.style.zIndex = '9999';
+      lookTo = null; const z = zOf(b, rankOf[b.id]) + 40;
+      drag = { b, el, mode: rz ? rz.className.replace(/.*rc-rz--(\w+).*/, '$1') : 'move', z, w0: worldAtPointer(e, z), ox: b.x, oy: b.y, ow: b.w, oh: b.h, moved: false, z0: b.z };
+      el.setPointerCapture(e.pointerId); el.classList.add('live'); b.z = 9999; place(b, el, true);
       e.preventDefault();
     });
     stage.addEventListener('pointermove', e => {
       if (!drag) return;
-      const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
-      if (!drag.moved && Math.hypot(dx, dy) < 4) return; drag.moved = true;
+      const w = worldAtPointer(e, drag.z), dx = w.x - drag.w0.x, dy = w.y - drag.w0.y;
+      if (!drag.moved && Math.hypot(dx * cam.k, dy * cam.k) < 4) return; drag.moved = true;
       const b = drag.b;
       if (drag.mode === 'move') { b.x = snap(drag.ox + dx); b.y = snap(drag.oy + dy); }
       else { if (drag.mode !== 's') b.w = Math.max(MIN_W, snap(drag.ow + dx)); if (drag.mode !== 'e') b.h = Math.max(MIN_H, snap(drag.oh + dy)); }
-      place(b, drag.el); if (sheetFor === b.id) positionSheet(b);
+      place(b, drag.el, true); if (sheetFor === b.id) positionSheet(b);
     });
     const endDrag = e => {
       if (!drag) return;
@@ -532,12 +714,19 @@ window.MRRoomCanvas = (function () {
       if (!host.classList.contains('on')) return;
       if ((e.key === 'Delete' || e.key === 'Backspace') && sel && !e.target.matches('input, textarea, [contenteditable]')) { e.preventDefault(); if (confirm('Remove this block?')) removeBlock(sel); }
       if (e.key === 'Escape' && !e.target.matches('input, textarea, [contenteditable]')) { closeSheet(); select(null); }
+      if (!e.target.matches('input, textarea, [contenteditable]') && !e.metaKey && !e.ctrlKey) {
+        const v = viewSize();
+        if (e.key === '0') fitNow(true);
+        else if (e.key === '+' || e.key === '=') { Object.assign(cam, zoomAt(cam, 1.25, v.W / 2, v.H / 2)); applyCam(); }
+        else if (e.key === '-') { Object.assign(cam, zoomAt(cam, 0.8, v.W / 2, v.H / 2)); applyCam(); }
+      }
     });
-    addEventListener('resize', () => { const b = byId(sheetFor); if (b) positionSheet(b); });
+    addEventListener('resize', () => { const b = byId(sheetFor); if (b) positionSheet(b); if (camSet) { centreOrigin(); applyCam(); } });
 
     load();
     return { reload: load, addBlock, get blocks() { return blocks; } };
   }
 
-  return { mount, TYPES, embedFor, fmtClock, parseClock, startFromUrl, withStart, quoteHtml, webHtml };
+  return { mount, TYPES, embedFor, fmtClock, parseClock, startFromUrl, withStart, quoteHtml, webHtml,
+           camera: { PERSP, DEPTH_STEP, DEPTH_MAX, K_MIN, K_MAX, clamp, depthOf, zOf, scaleAt, toScreen, toWorld, zoomAt, fitCam, wheelPx } };
 })();

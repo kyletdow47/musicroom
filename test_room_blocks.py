@@ -210,6 +210,89 @@ web_css = css[css.index("/* a web kept from Connections"):]
 chk(not re.search(r"#[0-9a-fA-F]{3,8}\b", web_css), "the Web block's CSS uses theme tokens only, no hex")
 chk("border-radius:0" in web_css.replace(" ", "") and "box-shadow" not in web_css, "square, no shadows (the house look)")
 
+# ── the camera: pan, zoom, depth ──
+if node:
+    CAM_JS = r"""
+    const fs = require('fs'), vm = require('vm');
+    const win = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), { window: win, URL, console });
+    const C = win.MRRoomCanvas.camera, out = {};
+    const cam = (o) => Object.assign({ x: 120, y: 80, k: 1, ox: 720, oy: 480, depth: true }, o || {});
+    // screen <-> world are exact inverses, on any layer, at any zoom, whatever the vanishing point
+    let worst = 0;
+    for (const k of [0.15, 0.5, 1, 1.7, 2.5]) for (const z of [-360, -120, 0, 120, 360]) for (const [wx, wy] of [[0, 0], [300, -200], [-1500, 900], [4000, 4000]]) {
+      const c = cam({ k, x: -300 + k * 40, y: 55, ox: 400 + k * 100, oy: 300 });
+      const s = C.toScreen(c, wx, wy, z), w = C.toWorld(c, s.x, s.y, z);
+      worst = Math.max(worst, Math.abs(w.x - wx), Math.abs(w.y - wy));
+    }
+    out.roundTrip = worst;
+    out.flatPlaneSame = (() => { const c = cam(), a = C.toScreen(c, 100, 50, 0), f = C.toScreen(cam({ depth: false }), 100, 50, 0); return [a.x === f.x, a.y === f.y]; })();
+    out.depthOffIgnoresZ = (() => { const c = cam({ depth: false }), a = C.toScreen(c, 100, 50, 300), b = C.toScreen(c, 100, 50, -300); return a.x === b.x && a.y === b.y; })();
+    // depth: nearer is bigger, farther is smaller, and a thing at the vanishing point does not move
+    out.scales = [-360, -120, 0, 120, 360].map(z => +C.scaleAt(z, true).toFixed(4));
+    out.scaleOff = C.scaleAt(300, false);
+    out.atVanishing = (() => { const c = cam({ x: 0, y: 0, k: 1, ox: 100, oy: 100 }), p = C.toScreen(c, 100, 100, 300); return [p.x, p.y]; })();
+    // parallax: shift the vanishing point and a near layer slides further than the page, a far layer the other way
+    out.parallax = (() => { const w = [200, 200], at = (z, ox) => C.toScreen(cam({ x: 0, y: 0, k: 1, ox, oy: 480 }), w[0], w[1], z).x;
+      return [at(-240, 760) - at(-240, 720), at(0, 760) - at(0, 720), at(240, 760) - at(240, 720)].map(v => +v.toFixed(3)); })();
+    // zoom keeps the point under the cursor still
+    out.zoomKeeps = (() => { let c = cam({ depth: false }), w0 = C.toWorld(c, 500, 400, 0); let m = 0;
+      for (const f of [1.25, 1.25, 0.8, 3, 0.2, 1.1]) { c = C.zoomAt(c, f, 500, 400); const w = C.toWorld(c, 500, 400, 0); m = Math.max(m, Math.abs(w.x - w0.x), Math.abs(w.y - w0.y)); } return m; })();
+    out.zoomBounds = [C.zoomAt(cam(), 1000, 0, 0).k, C.zoomAt(cam(), 0.0001, 0, 0).k, C.zoomAt(cam({ k: 1 }), 1.25, 0, 0).k];
+    // depth of a block
+    out.depthOf = [C.depthOf({ d: 2 }), C.depthOf({ d: 9 }), C.depthOf({ d: -9 }), C.depthOf({ d: 1.6 }), C.depthOf({}), C.depthOf({ d: 'x' }), C.depthOf({ d: NaN }), C.depthOf(null), C.depthOf({ d: Infinity })];
+    out.zOf = [C.zOf({ d: 0 }, 0), C.zOf({ d: 1 }, 0), C.zOf({ d: -3 }, 0), C.zOf({ d: 0 }, 5), C.zOf({ d: 3 }, 10)];
+    // fit: every block's corners, as drawn, land inside the area; with depth too
+    const fits = (blocks, depth, W, H) => {
+      const c = C.fitCam(blocks, W, H, cam({ depth, ox: W / 2, oy: H / 2 }));
+      const rank = {}; blocks.slice().sort((a, b) => a.z - b.z).forEach((b, i) => { rank[b.id] = i; });
+      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
+      blocks.forEach(b => [[b.x, b.y], [b.x + b.w, b.y + b.h]].forEach(([wx, wy]) => { const p = C.toScreen(c, wx, wy, C.zOf(b, rank[b.id])); x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y); x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y); }));
+      return { x0, y0, x1, y1, k: c.k, ok: x0 >= 0 && x1 <= W && y0 >= 90 && y1 <= H };
+    };
+    const row = [{ id: 'a', x: 40, y: 160, w: 360, h: 200, z: 1, d: 0 }, { id: 'b', x: 480, y: 160, w: 360, h: 200, z: 2, d: -3 }, { id: 'c', x: 920, y: 160, w: 360, h: 200, z: 3, d: 3 }];
+    out.fitFlat = fits(row, false, 1440, 1000); out.fitDepth = fits(row, true, 1440, 1000);
+    out.fitNarrow = fits(row, true, 520, 800); out.fitTall = fits([{ id: 'a', x: 0, y: 0, w: 300, h: 4000, z: 1, d: 2 }], true, 1440, 1000);
+    out.fitOne = fits([{ id: 'a', x: 5000, y: -3000, w: 200, h: 100, z: 1, d: 0 }], true, 1440, 1000);
+    out.fitEmpty = (() => { const c = C.fitCam([], 1440, 1000, cam()); return [c.k, isFinite(c.x), isFinite(c.y)]; })();
+    out.fitJunk = (() => { const c = C.fitCam([null, 5, { x: NaN, y: 0, w: 1, h: 1 }, { id: 'ok', x: 10, y: 10, w: 100, h: 100, z: 1 }], 1440, 1000, cam()); return [isFinite(c.k), isFinite(c.x), isFinite(c.y)]; })();
+    out.fitKeepsOrigin = (() => { const c = C.fitCam(row, 1440, 1000, cam({ ox: 700, oy: 400 })); return [c.ox, c.oy]; })();
+    out.wheel = [C.wheelPx(10, 0), C.wheelPx(3, 1), C.wheelPx(1, 2, 900), C.wheelPx(1, 2)];
+    const src = fs.readFileSync(process.argv[1], 'utf8');
+    out.src = { ctrl: src.includes('if (e.ctrlKey) {'), scrollKeeps: src.includes('function scrollsUnder(e)'), gesture: src.includes("view.addEventListener('gesturechange'"), reduced: src.includes('prefers-reduced-motion'),
+                far: src.includes("a === 'far' || a === 'near'"), hud: src.includes('data-hud="fit"'), noScrollLeft: !src.includes('host.scrollLeft') && !src.includes('host.scrollTop') };
+    console.log(JSON.stringify(out));
+    """
+    r = subprocess.run([node, "-e", CAM_JS, CANVAS], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        chk(False, "the camera runs under node: " + (r.stderr or "")[:400])
+    else:
+        o = json.loads(r.stdout)
+        chk(o["roundTrip"] < 1e-6, f"screen and world are exact inverses on every layer, zoom and vanishing point (worst error {o['roundTrip']})")
+        chk(o["flatPlaneSame"] == [True, True], "on the page layer (z = 0) depth changes nothing, so zoom-around-the-cursor stays exact")
+        chk(o["depthOffIgnoresZ"], "with depth off, a layer makes no difference at all")
+        chk(o["scales"] == sorted(o["scales"]) and o["scales"][0] < 1 < o["scales"][-1] and o["scales"][2] == 1, f"nearer is bigger, farther is smaller, the page layer is 1:1 ({o['scales']})")
+        chk(o["scaleOff"] == 1 and o["atVanishing"] == [100, 100], "no depth, no scaling; a thing at the vanishing point does not move whatever its layer")
+        p = o["parallax"]
+        chk(p[0] > 0 > p[2] and abs(p[1]) < 1e-9 and abs(p[2]) > abs(p[0]), f"moving the vanishing point right: far layers drift with it, near layers go against it (and further), the page layer not at all ({p})")
+        chk(o["zoomKeeps"] < 1e-6, "zooming keeps the spot under the cursor still, however many times you do it")
+        chk(o["zoomBounds"][0] == 2.5 and o["zoomBounds"][1] == 0.15 and o["zoomBounds"][2] == 1.25, f"zoom is held between 0.15 and 2.5 ({o['zoomBounds']})")
+        chk(o["depthOf"] == [2, 3, -3, 2, 0, 0, 0, 0, 0], f"a block's layer is a whole number from -3 to 3, and anything odd is the page layer ({o['depthOf']})")
+        chk(o["zOf"][0] == 0 and o["zOf"][1] == 120 and o["zOf"][2] == -360 and 0 < o["zOf"][3] < 5 and abs(o["zOf"][4] - 364) < 1e-9, f"each layer is 120px apart; blocks on one layer keep their stacking by a hair ({o['zOf']})")
+        for name in ("fitFlat", "fitDepth", "fitNarrow", "fitTall", "fitOne"):
+            chk(o[name]["ok"], f"Fit shows every block as it is drawn, {name[3:].lower()}: x {o[name]['x0']:.0f}-{o[name]['x1']:.0f}, y {o[name]['y0']:.0f}-{o[name]['y1']:.0f}")
+        chk(o["fitDepth"]["k"] < o["fitFlat"]["k"], "with depth on, Fit zooms out a little more, because near blocks are drawn bigger")
+        chk(o["fitEmpty"][0] == 1 and o["fitEmpty"][1] and o["fitEmpty"][2], "an empty wall gets a plain, finite view")
+        chk(o["fitJunk"] == [True, True, True], "Fit ignores junk blocks instead of breaking")
+        chk(o["fitKeepsOrigin"] == [700, 400], "Fit leaves the vanishing point where it was")
+        chk(o["wheel"] == [10, 48, 900, 800], f"a wheel turn is read in pixels whatever unit the browser uses ({o['wheel']})")
+        sr = o["src"]
+        chk(sr["ctrl"] and sr["scrollKeeps"] and sr["gesture"], "pinch zooms (trackpad, Safari/app, touch); a plain scroll pans, except where a block scrolls itself")
+        chk(sr["reduced"] and sr["far"] and sr["hud"], "the look-around respects reduced motion; blocks can be pushed far or pulled near; there are Fit / + / − / 3D buttons")
+        chk(sr["noScrollLeft"], "nothing still depends on the old scroll bars")
+        chk("addMenu.onclick" not in open(CANVAS, encoding="utf-8").read() and open(CANVAS, encoding="utf-8").read().count("addMenu.addEventListener('click'") == 1,
+            "the + menu has ONE click handler (two used to run, and the right-click one moved the previous block to the click before the new one existed)")
+        chk("snap(at.x - T.w / 2)" in open(CANVAS, encoding="utf-8").read(), "a right-click puts the new block's middle on the click")
+
 shutil.rmtree(TMP, ignore_errors=True)
 print(f"\n{'ALL PASSED' if not fails else str(len(fails)) + ' FAILED'}")
 sys.exit(1 if fails else 0)
