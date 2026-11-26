@@ -13,7 +13,7 @@ has none, the web says so plainly. (MusicBrainz sample links and Discogs credits
 Nothing is invented: a group with nothing in it is left out, and every failure is a note, not a crash.
 
 Routes:
-  GET /connections                              the page
+  GET /connections                              (sends you to the wall: the map lives there, see static/js/wall_music.js)
   GET /api/connections?kind=album&artist=&album=   (or &id=<deezer album id>)
   GET /api/connections?kind=artist&id=<deezer artist id>   (or &name=)
 """
@@ -323,135 +323,20 @@ def preview_for(dz, kind, rid):
     return rows, note, None
 
 
-# ── keeping a web on the wall ─────────────────────────────────────────────
-# The page sends a picture of the web it is showing (who is where). Nothing from the browser is trusted:
-# every field is checked, trimmed and re-built here before it can reach the wall.
-
-WEB_MAX_NODES = 120
-WEB_MAX_EDGES = 400
-_NODE_TYPES = ("artist", "album", "label", "genre")
-_IMAGE_OK = re.compile(r"^https://([a-z0-9-]+\.)*(dzcdn\.net|scdn\.co)/[^\s\"'<>]*$", re.I)
-WALL_BLOCK = {"w": 680, "h": 500, "x": 32}
-
-
-def _coord(v):
-    try:
-        f = float(v)
-    except (TypeError, ValueError):
-        return None
-    return round(f, 1) if f == f and abs(f) < 50000 else None          # f == f rules out NaN; the bound rules out inf
-
-
-def _text(v, n):
-    return re.sub(r"\s+", " ", str(v if v is not None else "")).strip()[:n]
-
-
-def clean_web(raw):
-    """A picture of a web, checked. Returns {nodes, edges, home} or None if it is not usable.
-    Nodes: type, id (artists and albums only), name, sub, image (https, Deezer or Spotify pictures only), year, x, y.
-    Edges: pairs of node positions. `home` is the position of the record the web started from, and it must be
-    an artist or an album (that is what can be opened again)."""
-    if not isinstance(raw, dict) or not isinstance(raw.get("nodes"), list) or len(raw["nodes"]) > WEB_MAX_NODES:
-        return None
-    nodes, remap = [], {}
-    for i, n in enumerate(raw["nodes"]):
-        if not isinstance(n, dict) or n.get("type") not in _NODE_TYPES:
-            continue
-        name, x, y = _text(n.get("name"), 200), _coord(n.get("x")), _coord(n.get("y"))
-        if not name or x is None or y is None:
-            continue
-        rid = None
-        if n["type"] in ("artist", "album"):
-            try:
-                rid = int(n.get("id"))
-            except (TypeError, ValueError):
-                continue
-            if rid <= 0:
-                continue
-        img = str(n.get("image") or "")
-        year = _text(n.get("year"), 4)
-        remap[i] = len(nodes)
-        nodes.append({"type": n["type"], "id": rid, "name": name, "sub": _text(n.get("sub"), 200),
-                      "image": img if len(img) <= 500 and _IMAGE_OK.match(img) else "",
-                      "year": year if re.fullmatch(r"\d{4}", year) else "", "x": x, "y": y})
-    try:
-        home = remap.get(int(raw.get("home")))
-    except (TypeError, ValueError):
-        home = None
-    if home is None or nodes[home]["type"] not in ("artist", "album"):
-        return None
-    edges, seen = [], set()
-    for e in raw.get("edges") or []:
-        if not (isinstance(e, (list, tuple)) and len(e) == 2):
-            continue
-        try:
-            a, b = remap.get(int(e[0])), remap.get(int(e[1]))
-        except (TypeError, ValueError):
-            continue
-        if a is None or b is None or a == b or (min(a, b), max(a, b)) in seen:
-            continue
-        seen.add((min(a, b), max(a, b)))
-        edges.append([min(a, b), max(a, b)])
-        if len(edges) >= WEB_MAX_EDGES:
-            break
-    return {"nodes": nodes, "edges": edges, "home": home}
-
-
-def web_block(web, block_id):
-    """The wall block for a cleaned web. `url` is where the live web opens again (always inside the app)."""
-    h = web["nodes"][web["home"]]
-    return {"id": block_id, "type": "web", "x": WALL_BLOCK["x"], "y": 0, "w": WALL_BLOCK["w"], "h": WALL_BLOCK["h"], "z": 1,
-            "data": {"web": web, "kind": h["type"], "rid": h["id"], "title": h["name"], "sub": h["sub"],
-                     "url": f"/connections?kind={h['type']}&id={h['id']}", "caption": ""}}
-
-
-def put_web_on_wall(blocks, web, block_id):
-    """Add a kept web below what is on the wall, or refresh the one already kept for the same record
-    (its place, size and caption stay). Returns (blocks, 'added' | 'updated')."""
-    blocks = [b for b in (blocks or []) if isinstance(b, dict)]
-    h = web["nodes"][web["home"]]
-    for b in blocks:
-        d = b.get("data") if isinstance(b.get("data"), dict) else {}
-        if b.get("type") == "web" and d.get("kind") == h["type"] and d.get("rid") == h["id"]:
-            d["web"], d["title"], d["sub"] = web, h["name"], h["sub"]
-            b["data"] = d
-            return blocks, "updated"
-    blk = web_block(web, block_id)
-    bottom = max([(b.get("y") or 0) + (b.get("h") or 0) for b in blocks] or [0])
-    blk["y"] = int(-(-((bottom + 24) if blocks else 120) // 8) * 8)          # on the 8px grid the wall snaps to
-    blk["z"] = len(blocks) + 1
-    blocks.append(blk)
-    return blocks, "added"
-
-
-def register(app, wall=None):
-    """`wall` = {"load": f(pid) -> {"blocks": [...]}, "save": f(pid, blocks), "well": f() -> pid} from the app.
-    Without it the page works but a web cannot be kept."""
-    from flask import jsonify, render_template, request
+def register(app):
+    from flask import jsonify, redirect, request
 
     hooks = {"get": None}                     # tests replace this so nothing touches the network
     app.config["CONNECTIONS_HOOKS"] = hooks
 
     @app.route("/connections")
     def connections_page():
-        return render_template("connections.html")
-
-    @app.route("/api/connections/keep", methods=["POST"])
-    def api_connections_keep():
-        if not wall:
-            return jsonify({"error": "There is no wall to keep it on."}), 503
-        web = clean_web((request.get_json(silent=True) or {}).get("web"))
-        if not web:
-            return jsonify({"error": "That web could not be kept."}), 400
-        pid = wall["well"]()
-        if not pid:
-            return jsonify({"error": "There is no room to keep it in."}), 404
-        import uuid
-        blocks, placed = put_web_on_wall(wall["load"](pid).get("blocks"), web, "k" + uuid.uuid4().hex[:7])
-        if len(blocks) > 400:
-            return jsonify({"error": "The wall is full."}), 400
-        wall["save"](pid, blocks)
-        return jsonify({"ok": True, "placed": placed, "pid": pid, "n": len(blocks)})
+        """The map lives on the wall now. An old address (a bookmark, an old Web block's "explore", a link from Find it)
+        lands there: with a record in the address it is put on the wall, otherwise the Music panel opens."""
+        keep = {k: request.args[k] for k in ("kind", "id", "artist", "album", "title", "name") if request.args.get(k)}
+        if keep:
+            return redirect("/room?wall=1&seed=" + urllib.parse.quote(urllib.parse.urlencode(keep), safe=""))
+        return redirect("/room?wall=1&music=1")
 
     @app.route("/api/connections/preview")
     def api_connections_preview():

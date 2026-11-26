@@ -16231,12 +16231,7 @@ except ImportError:
 # Connections (the neighbourhood of a record: label, genres, other records, similar artists) lives in connections.py.
 try:
     import connections as _connections
-    import json as _wall_json
-    _connections.register(app, wall={
-        "load": lambda pid: _room_canvas_load(pid),
-        "save": lambda pid, blocks: set_setting(f"room_canvas:{pid}", _wall_json.dumps({"v": 1, "blocks": blocks, "links": __import__("wall_links").clean_links(_room_canvas_load(pid).get("links"), blocks)})),
-        "well": lambda: (query_one("SELECT id FROM places WHERE is_well=1") or {}).get("id"),
-    })
+    _connections.register(app)
 except ImportError:
     pass
 

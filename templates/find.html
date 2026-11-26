@@ -121,7 +121,7 @@
             </div>
             <div id="fd-ahits"></div>
             <div id="fd-atracks"></div>
-            <p class="fd__msg" id="fd-conn" hidden><a id="fd-connlink" href="#">See what is around this record: label, genres, similar artists →</a></p>
+            <p class="fd__msg" id="fd-conn" hidden><a id="fd-connlink" href="#">Put this record on your wall, with what is around it →</a></p>
         </div>
 
         <!-- MIX: find each track -->
@@ -255,7 +255,7 @@
   // The record's songs, so the grúpa holds every one and not a single "album" element.
   async function pickAlbum(a){
     const box = $('fd-atracks'); albumSongs = null; $('fd-land').hidden = true;
-    $('fd-connlink').href = '/connections?' + new URLSearchParams({ kind: 'album', artist: ($('fd-aa').value || a.subtitle || '').trim(), album: a.title || '' });
+    $('fd-connlink').href = '/room?wall=1&seed=' + encodeURIComponent(new URLSearchParams({ kind: 'album', artist: ($('fd-aa').value || a.subtitle || '').trim(), album: a.title || '' }).toString());
     $('fd-conn').hidden = false;
     const id = (String(a.url).match(/album\/([A-Za-z0-9]+)/) || [])[1];
     box.innerHTML = '<p class="fd__msg">Reading the songs…</p>';

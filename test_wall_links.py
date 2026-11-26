@@ -62,24 +62,6 @@ chk(c.get("/api/room/canvas/777").get_json()["links"] == [], "a wall that was ne
 with app.app.app_context():
     app.set_setting("room_canvas:8", json.dumps({"v": 1, "blocks": blocks}))
 chk(c.get("/api/room/canvas/8").get_json()["links"] == [] and len(c.get("/api/room/canvas/8").get_json()["blocks"]) == 3, "a wall saved before lines existed loads fine")
-# connections.put_web_on_wall saves through the app's helper: lines must survive it
-import connections
-wall = {"load": lambda pid: app._room_canvas_load(pid), "well": lambda: 9}
-c.post("/api/room/canvas/9", json={"v": 1, "blocks": blocks, "links": [L("k1", "k2", label="keep me")]})
-from flask import Flask
-a2 = Flask(__name__)
-store = {}
-def saver(pid, bl):
-    app.set_setting(f"room_canvas:{pid}", json.dumps({"v": 1, "blocks": bl, "links": wl.clean_links(app._room_canvas_load(pid).get("links"), bl)}))
-connections.register(a2, wall=dict(wall, save=saver))
-web = {"nodes": [{"type": "album", "id": 1, "name": "A", "x": 0, "y": 0}], "edges": [], "home": 0}
-rr = a2.test_client().post("/api/connections/keep", json={"web": web})
-chk(rr.status_code == 200, "keeping a web still works")
-after = c.get("/api/room/canvas/9").get_json()
-chk(len(after["blocks"]) == 4 and [(l["a"], l["b"], l["label"]) for l in after["links"]] == [("k1", "k2", "keep me")], "…and does not wipe the lines already on the wall")
-src = open(os.path.join(PROJ, "app.py"), encoding="utf-8").read()
-chk('"links": __import__("wall_links").clean_links(_room_canvas_load(pid).get("links"), blocks)' in src, "app.py's own Keep helper preserves lines (it is what the test above imitates)")
-
 print("")
 print("  ALL PASS" if not fails else f"  {len(fails)} FAILURE(S): {fails}")
 sys.exit(1 if fails else 0)

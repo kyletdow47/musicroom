@@ -206,7 +206,7 @@ if node:
         chk("NaN" not in o["junk"] and "Infinity" not in o["junk"] and "undefined" not in o["junk"], "junk positions never reach the drawing (no NaN, Infinity or undefined)")
         chk(o["webType"]["keepOnly"] is True and "web" not in o["menu"] and "quote" in o["menu"], "Web is not in the + menu (it is only kept from Connections); the other blocks still are")
         chk(o["src"]["filtersMenu"] and o["src"]["noFill"] and o["src"]["openGuard"], "the wall hides 'fill' for a web, and only opens addresses inside Connections")
-web_css = css[css.index("/* a web kept from Connections"):]
+web_css = css[css.index("/* a web kept from Connections"):css.index("/* lines between blocks")]
 chk(not re.search(r"#[0-9a-fA-F]{3,8}\b", web_css), "the Web block's CSS uses theme tokens only, no hex")
 chk("border-radius:0" in web_css.replace(" ", "") and "box-shadow" not in web_css, "square, no shadows (the house look)")
 

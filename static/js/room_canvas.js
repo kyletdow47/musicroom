@@ -24,6 +24,7 @@ window.MRRoomCanvas = (function () {
     playlist: { label: 'Playlist', hint: 'a place, a set, or records you pick',    w: 380, h: 380 },
     mix:      { label: 'Mix',      hint: 'a mix or video link that plays here',    w: 440, h: 280 },
     link:     { label: 'Link',     hint: 'any web page, as a card',                w: 320, h: 200 },
+    node:     { label: 'Music',    hint: 'an album, artist, label or genre on the map', w: 148, h: 128, keepOnly: true },
     web:      { label: 'Web',      hint: 'a map kept from Connections',            w: 680, h: 500, keepOnly: true },
   };
   const snap = v => Math.max(0, Math.round(v / SNAP) * SNAP);
@@ -67,6 +68,18 @@ window.MRRoomCanvas = (function () {
   // a quote's time: the one typed in, else the one its link carries
   const quoteAt = d => (d.at != null ? d.at : (d.url ? startFromUrl(d.url) : null));
 
+  // A music node's inside: an album or artist (a picture and a name), or a label or genre (a small tag). Pure, and escaped.
+  // d = { kind: 'album'|'artist'|'label'|'genre', name, sub, image, year, fans, role, home, grown }
+  const fansText = n => (n == null ? '' : (n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1).replace('.0', '') + 'k' : String(n)) + ' fans');
+  function nodeHtml(d) {
+    d = d || {};
+    const name = String(d.name || '').trim() || '(untitled)';
+    if (d.kind === 'label' || d.kind === 'genre') return `<div class="rc-node rc-node--tag rc-node--${d.kind === 'genre' ? 'genre' : 'label'}"><span class="rc-node__tag">${esc(name)}${d.kind === 'label' ? ' ↗' : ''}</span></div>`;
+    const meta = d.kind === 'album' ? [d.year, d.sub].filter(Boolean).join(' · ') : (d.role || fansText(d.fans));
+    const img = /^https:\/\//.test(d.image || '') ? `<img class="rc-node__im" src="${esc(d.image)}" alt="" draggable="false" loading="lazy">` : `<span class="rc-node__im rc-node__ph">${esc(name.charAt(0))}</span>`;
+    return `<div class="rc-node rc-node--${d.kind === 'album' ? 'album' : 'artist'}${d.home ? ' rc-node--home' : ''}">${img}<b class="rc-node__n">${esc(name)}</b>${meta ? `<small class="rc-node__m">${esc(meta)}</small>` : ''}${d.grown ? '' : '<i class="rc-node__more" title="Click to grow its neighbours">+</i>'}</div>`;
+  }
+
   // A kept web's inside, as an SVG drawn from the picture the page took (who sits where). It scales with the
   // block, needs no network to lay out, and everything in it is escaped. `d.web` = { nodes:[{type,name,sub,image,year,x,y}], edges:[[i,j]], home }.
   function webHtml(d) {
@@ -89,7 +102,7 @@ window.MRRoomCanvas = (function () {
     }).join('');
     const home = nodes[w.home] || {};
     return `<div class="rc-web"><svg viewBox="${vb.join(' ')}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${esc('A web around ' + (home.name || 'a record'))}"><g class="ln">${lines}</g>${things}</svg>` +
-      `<div class="rc-web__bar"><span class="rc-web__t">${esc(d.title || home.name || '')}</span><button class="rc-web__go" data-act="openweb" title="Open it live, and keep exploring">explore ↗</button></div></div>`;
+      `<div class="rc-web__bar"><span class="rc-web__t">${esc(d.title || home.name || '')}</span><button class="rc-web__go" data-act="unpack" title="Put these on the wall as real blocks you can move and join">unpack</button><button class="rc-web__go" data-act="openweb" title="Open it live, and keep exploring">explore ↗</button></div></div>`;
   }
 
   // a quote block's inside, as markup. Pure (and everything typed is escaped), so it can be tested without a page.
@@ -268,7 +281,7 @@ window.MRRoomCanvas = (function () {
     const view = host.querySelector('#rc-view'), stage = host.querySelector('#rc-stage'), empty = host.querySelector('#rc-empty');
     const addBtn = host.querySelector('#rc-add'), addMenu = host.querySelector('#rc-addmenu');
     const sheet = host.querySelector('#rc-sheet'), status = host.querySelector('#rc-status');
-    addMenu.innerHTML = Object.keys(TYPES).filter(t => !TYPES[t].keepOnly).map(t => `<button data-type="${t}"><b>${esc(TYPES[t].label)}</b><small>${esc(TYPES[t].hint)}</small></button>`).join('');
+    addMenu.innerHTML = '<button data-type="__music"><b>Music</b><small>from what is playing, a liked song, or an album you type</small></button>' + Object.keys(TYPES).filter(t => !TYPES[t].keepOnly).map(t => `<button data-type="${t}"><b>${esc(TYPES[t].label)}</b><small>${esc(TYPES[t].hint)}</small></button>`).join('');
 
     // ── the camera in use ──
     const reduced = !!(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -387,9 +400,12 @@ window.MRRoomCanvas = (function () {
       if (i < 0 || j < 0 || j >= zs.length) return;
       [zs[i].z, zs[j].z] = [zs[j].z, zs[i].z]; renderAll(); dirty();
     }
+    const hooks = { select: [], click: [] };
+    const fire = (kind, b) => hooks[kind].forEach(f => { try { f(b); } catch (_) {} });
     function select(id) {
       sel = id;
       stage.querySelectorAll('.rc-block').forEach(el => el.classList.toggle('sel', el.dataset.id === id));
+      fire('select', id ? byId(id) : null);
     }
 
     // ── render ──
@@ -415,13 +431,13 @@ window.MRRoomCanvas = (function () {
       el.innerHTML = `
         <div class="rc-tools">
           <span class="rc-tools__type">${esc(TYPES[b.type].label)}</span>
-          ${b.type !== 'text' && b.type !== 'web' ? '<button data-act="fill" title="Fill this block">fill</button>' : ''}
+          ${b.type !== 'text' && b.type !== 'web' && b.type !== 'node' ? '<button data-act="fill" title="Fill this block">fill</button>' : ''}
           <button data-act="down" title="Send back">↓</button><button data-act="up" title="Bring forward">↑</button>
           <button data-act="link" title="Join this to another block with a line">link</button><button data-act="far" title="Push it farther away: smaller, and it moves less">far</button><button data-act="near" title="Pull it nearer: larger, and it moves more">near</button>
           <button data-act="del" title="Remove this block">✕</button>
         </div>
         <div class="rc-body"></div>
-        ${b.type !== 'text' ? '<div class="rc-cap" contenteditable="true" spellcheck="false" data-k="caption" placeholder="a caption"></div>' : ''}
+        ${b.type !== 'text' && b.type !== 'node' ? '<div class="rc-cap" contenteditable="true" spellcheck="false" data-k="caption" placeholder="a caption"></div>' : ''}
         <div class="rc-dot" data-act="dot" title="Drag this to another block to join them with a line"></div>
         <div class="rc-rz rc-rz--e"></div><div class="rc-rz rc-rz--s"></div><div class="rc-rz rc-rz--se"></div>`;
       return el;
@@ -453,6 +469,8 @@ window.MRRoomCanvas = (function () {
               <div class="rc-pl__acts"><button data-act="playall" title="Play these, in order (replaces the cue)">▶ play all</button><button data-act="cueall" title="Add these to the cue">＋ cue all</button></div></div>
             <div class="rc-pl__rows">${ts.map((t, i) => `<div class="rc-pl__row" data-i="${i}"><img class="rc-pl__cover" src="${coverUrl(t, 192)}" alt="" loading="lazy" draggable="false"><div class="rc-pl__meta"><div class="rc-pl__t" data-act="open" data-tid="${t.id}">${esc(t.title || 'Untitled')}</div><div class="rc-pl__a">${esc(t.artist_name || t.artist || '')}</div></div><button class="rc-pl__play" data-act="playrow" data-i="${i}" title="Play now">▶</button></div>`).join('')}</div>
           </div>` : `<button class="rc-fillme" data-act="fill">+ choose a playlist</button>`;
+      } else if (b.type === 'node') {
+        body.innerHTML = nodeHtml(d);
       } else if (b.type === 'web') {
         body.innerHTML = webHtml(d);
       } else if (b.type === 'mix') {
@@ -618,6 +636,7 @@ window.MRRoomCanvas = (function () {
       const t = e.target.closest('[data-type]'); if (!t) return;
       const at = addMenu.classList.contains('at') ? { x: +addMenu.dataset.x, y: +addMenu.dataset.y } : null;
       addMenu.classList.remove('on', 'at'); addMenu.style.left = ''; addMenu.style.top = '';
+      if (t.dataset.type === '__music') { if (window.WallMusic) window.WallMusic.openStart(at); return; }
       addBlock(t.dataset.type, at);
     });
     view.addEventListener('contextmenu', e => {
@@ -634,7 +653,8 @@ window.MRRoomCanvas = (function () {
       if (!el) return;
       const b = byId(el.dataset.id); if (!b) return;
       if (linkFrom) { const from = linkFrom; cancelLinking(); if (from !== b.id) addLink(from, b.id); else select(b.id); return; }
-      select(b.id);
+      if (dragMoved) { dragMoved = false; return; }                       // that click was the end of a drag
+      select(b.id); if (!e.target.closest('.rc-tools, .rc-dot')) fire('click', b);
       const act = e.target.closest('[data-act]'); if (!act) return;
       const a = act.dataset.act;
       if (a === 'del') { if (confirm('Remove this block?')) removeBlock(b.id); }
@@ -649,6 +669,7 @@ window.MRRoomCanvas = (function () {
       else if (a === 'cueall') { cue((b.data.tracks || []).map(toItem), false); flash(act, '✓ cued'); }
       else if (a === 'playrow') playNow(toItem((b.data.tracks || [])[+act.dataset.i]));
       else if (a === 'open') { const tid = +(act.dataset.tid || (b.data.track || {}).id); if (tid && opts.openTrack) { try { opts.openTrack(tid); } catch (_) { location.href = `/room?track=${tid}`; } } }
+      else if (a === 'unpack') { if (window.WallMusic) window.WallMusic.unpack(b.id); }
       else if (a === 'openweb') { const u = String((b.data || {}).url || ''); if (/^\/connections\?/.test(u)) location.href = u; }
       else if (a === 'openurl') openUrl(b.type === 'quote' ? withStart(b.data.url, quoteAt(b.data)) : b.data.url);
     });
@@ -675,7 +696,7 @@ window.MRRoomCanvas = (function () {
     stage.addEventListener('drop', e => { const el = e.target.closest('.rc-block--image'); if (!el) return; e.preventDefault(); el.classList.remove('drop'); const b = byId(el.dataset.id); const f = e.dataTransfer.files && e.dataTransfer.files[0]; if (b && f) uploadImage(b, f); });
 
     // ── moving around: drag the background to pan, two fingers / scroll to pan, pinch to zoom ──
-    let drag = null, panning = null, pinch = null;
+    let drag = null, panning = null, pinch = null, dragMoved = false;
     const fingers = new Map();
     // a block's own scroll (a playlist's rows, a long quote) keeps its wheel; everywhere else a wheel pans
     function scrollsUnder(e) {
@@ -766,7 +787,7 @@ window.MRRoomCanvas = (function () {
       if (dot) { lookTo = null; linking = { from: b.id, x: e.clientX, y: e.clientY }; dot.setPointerCapture(e.pointerId); e.preventDefault(); drawLinks(); return; }
       const rz = e.target.closest('.rc-rz');
       if (!rz && e.target.closest('[contenteditable], input, button, a, iframe, select, textarea, img[data-act], .rc-pl__rows')) return;
-      lookTo = null; const z = zOf(b, rankOf[b.id]) + 40;
+      lookTo = null; dragMoved = false; const z = zOf(b, rankOf[b.id]) + 40;
       drag = { b, el, mode: rz ? rz.className.replace(/.*rc-rz--(\w+).*/, '$1') : 'move', z, w0: worldAtPointer(e, z), ox: b.x, oy: b.y, ow: b.w, oh: b.h, moved: false, z0: b.z };
       el.setPointerCapture(e.pointerId); el.classList.add('live'); b.z = 9999; place(b, el, true);
       e.preventDefault();
@@ -783,7 +804,7 @@ window.MRRoomCanvas = (function () {
     });
     const endDrag = e => {
       if (!drag) return;
-      const { b, el, moved, z0 } = drag; drag = null; el.classList.remove('live');
+      const { b, el, moved, z0 } = drag; drag = null; dragMoved = moved; el.classList.remove('live');
       b.z = z0; if (moved) { b.z = Math.max(...blocks.map(x => x.z === 9999 ? 0 : x.z), 0) + 1; }   // what you touched comes to the front
       renderAll(); if (moved) dirty(); select(b.id);
     };
@@ -815,10 +836,26 @@ window.MRRoomCanvas = (function () {
     });
     addEventListener('resize', () => { const b = byId(sheetFor); if (b) positionSheet(b); if (camSet) { centreOrigin(); applyCam(); } });
 
-    load();
-    return { reload: load, addBlock, get blocks() { return blocks; }, get links() { return links; }, addLink };
+    const ready = load();
+    const api = {
+      reload: load, addBlock, addLink, host, get blocks() { return blocks; }, get links() { return links; },
+      on: (kind, fn) => { if (hooks[kind]) hooks[kind].push(fn); },
+      // a block made by code (a music node): x, y are its middle, in the wall's own coordinates
+      addNode(type, data, mid, d, size) {
+        const T = TYPES[type], w = size ? size.w : T.w, h = size ? size.h : T.h;
+        const b = { id: uid(), type, x: snap(mid.x - w / 2), y: snap(mid.y - h / 2), w, h, z: blocks.length + 1, data };
+        if (d) b.d = d; blocks.push(b); return b;
+      },
+      removeBlocks(ids) { const set = new Set(ids); blocks = blocks.filter(b => !set.has(b.id)); links = links.filter(l => !set.has(l.a) && !set.has(l.b)); if (sel && set.has(sel)) sel = null; },
+      setLinks(next) { links = next; },
+      changed() { renderAll(); dirty(); },
+      ready, select, viewCentreWorld, fit: fitNow, snap, TYPES,
+      panTo(wx, wy) { const v = viewSize(); cam.x = v.W / 2 - wx * cam.k; cam.y = v.H / 2 - wy * cam.k; applyCam(); },
+    };
+    if (window.WallMusic) window.WallMusic.attach(api);
+    return api;
   }
 
-  return { mount, TYPES, embedFor, fmtClock, parseClock, startFromUrl, withStart, quoteHtml, webHtml, LinkOps,
+  return { mount, TYPES, embedFor, fmtClock, parseClock, startFromUrl, withStart, quoteHtml, webHtml, nodeHtml, LinkOps,
            camera: { PERSP, DEPTH_STEP, DEPTH_MAX, K_MIN, K_MAX, clamp, depthOf, zOf, scaleAt, toScreen, toWorld, zoomAt, fitCam, wheelPx } };
 })();

@@ -1,4 +1,4 @@
-/* conn_graph.js — the growing web behind /connections.
+/* conn_graph.js — the force layout behind the music map on the wall (wall_music.js).
  *
  * Two small, pure parts (no DOM, so they can be tested in node):
  *
@@ -99,7 +99,7 @@
         dx = m.x - n.x; dy = m.y - n.y; d2 = dx * dx + dy * dy;
         if (d2 < 0.01) { dx = (g.rand() - .5); dy = (g.rand() - .5); d2 = dx * dx + dy * dy + 0.01; }
         d = Math.sqrt(d2);
-        var need = (RADIUS[n.type] || 46) + (RADIUS[m.type] || 46) + 30;
+        var need = (n.r || RADIUS[n.type] || 46) + (m.r || RADIUS[m.type] || 46) + 30;      // (n.r: a node can bring its own size, as a block on the wall does)
         f = 9000 / d2 * alpha;
         if (d < need) f += (need - d) * 0.35;                           // overlap: shove
         dx /= d; dy /= d;
@@ -110,7 +110,7 @@
     // neighbours pull toward a comfortable distance
     g.edges.forEach(function (e) {
       dx = e.b.x - e.a.x; dy = e.b.y - e.a.y; d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-      var rest = Math.max(REST[e.b.type] || 170, REST[e.a.type] || 170) * (e.a.type === 'label' || e.a.type === 'genre' ? 0.9 : 1);
+      var rest = e.rest || Math.max(REST[e.b.type] || 170, REST[e.a.type] || 170) * (e.a.type === 'label' || e.a.type === 'genre' ? 0.9 : 1);      // (e.rest: a join can say how far apart its ends like to sit)
       f = (d - rest) * 0.045 * Math.max(alpha, 0.15);
       dx /= d; dy /= d;
       if (!e.a.pinned) { e.a.vx += dx * f; e.a.vy += dy * f; }
@@ -119,7 +119,7 @@
     // a faint pull to the middle keeps stray branches from drifting off
     list.forEach(function (n) {
       if (n.pinned) { n.vx = n.vy = 0; return; }
-      n.vx -= n.x * 0.004 * alpha; n.vy -= n.y * 0.004 * alpha;
+      if (!g.noGravity) { n.vx -= n.x * 0.004 * alpha; n.vy -= n.y * 0.004 * alpha; }          // (g.noGravity: placing a few nodes round one that is somewhere on a wall, not round the origin)
       n.vx *= 0.8; n.vy *= 0.8;
       var sp = Math.sqrt(n.vx * n.vx + n.vy * n.vy);
       if (sp > 40) { n.vx *= 40 / sp; n.vy *= 40 / sp; }                  // never fling
