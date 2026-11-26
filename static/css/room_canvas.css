@@ -157,3 +157,23 @@
 .rc-chip button{ appearance:none; border:none; background:none; color:var(--muted); font:inherit; font-size:.7rem; cursor:pointer; padding:0 2px; }
 .rc-chip button:hover{ color:var(--danger,#c4574a); }
 .rc-tabs{ margin-top:0; }
+
+/* a web kept from Connections: the picture of the map, drawn from the saved positions */
+.rc-web{ position:relative; height:100%; box-sizing:border-box; background:var(--bg); }
+.rc-web svg{ position:absolute; inset:0; width:100%; height:100%; display:block; }
+.rc-web line{ stroke:var(--border); stroke-width:1.4; }
+.rc-web line.soft{ stroke-dasharray:3 5; }
+.rc-web .fr{ fill:var(--bg); stroke:var(--border); stroke-width:1.2; }
+.rc-web .fr.alb{ stroke:var(--text); }
+.rc-web .fr.home{ stroke:var(--text); stroke-width:2.4; }
+.rc-web .nm{ fill:var(--text); font-family:var(--f-display); font-size:15px; paint-order:stroke; stroke:var(--bg); stroke-width:4px; }
+.rc-web .nm.big{ font-size:21px; }
+.rc-web .ph{ fill:var(--muted); font-family:var(--f-display); font-size:26px; }
+.rc-web .tag{ fill:var(--bg); stroke:var(--border); stroke-width:1.2; }
+.rc-web .tag.dash{ stroke-dasharray:3 3; }
+.rc-web .sm{ fill:var(--muted); font-family:var(--f-mono); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; }
+.rc-web__bar{ position:absolute; left:0; right:0; top:0; display:flex; align-items:baseline; gap:12px; padding:10px 14px; pointer-events:none; }
+.rc-web__t{ font-family:var(--f-display); font-size:1.15rem; line-height:1.1; color:var(--text); background:var(--bg); padding:0 4px 0 0; }
+.rc-web__go{ pointer-events:auto; margin-left:auto; appearance:none; border:1px solid var(--border); background:var(--bg); color:var(--text); font:inherit; font-family:var(--f-mono); font-size:.64rem; letter-spacing:.1em; text-transform:uppercase; padding:5px 8px; cursor:pointer; border-radius:0; }
+.rc-web__go:hover{ border-color:var(--text); }
+.rc-web__empty{ padding:20px; font-family:var(--f-mono); font-size:.8rem; color:var(--muted); }

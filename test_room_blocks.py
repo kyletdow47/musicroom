@@ -163,6 +163,53 @@ chk('id="ex-vsave"' in html and "saveVideoMoment" in html and "enablejsapi=1" in
 chk("timestamp_sec: at" in html, "Explore saves the time with the moment")
 chk(".ex-video__save [hidden]" in html, "the 'now' button really stays hidden until the player reports where it is (the button style would otherwise show it)")
 
+# ── a web kept from Connections (the Web block) ──
+if node:
+    WEB_JS = r"""
+    const fs = require('fs'), vm = require('vm');
+    const win = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), { window: win, URL, console });
+    const W = win.MRRoomCanvas, out = {};
+    const nd = (type, name, x, y, extra) => Object.assign({ type, name, x, y }, extra || {});
+    const web = { nodes: [nd('album', 'Home <b>Album</b>', 0, 0, { image: 'https://cdn-images.dzcdn.net/a.jpg', year: '2025' }),
+                          nd('artist', 'Photay', 200, -90, { image: 'https://i.scdn.co/b.jpg' }),
+                          nd('artist', 'No Picture', -180, 100),
+                          nd('label', 'TVPCO', -150, -120), nd('genre', 'Electro', 120, 150)], edges: [[0, 1], [0, 2], [0, 3], [0, 4]], home: 0 };
+    out.good = W.webHtml({ web, title: 'KOSMOBOTANIKA', url: '/connections?kind=album&id=10' });
+    out.hostile = W.webHtml({ web: { nodes: [nd('album', '<script>alert(1)</script>"><img src=x onerror=alert(2)>', 0, 0, { image: 'https://cdn.dzcdn.net/x.jpg" onload="alert(3)' }),
+                                             nd('artist', "O'Brien & Sons", 100, 0, { image: 'javascript:alert(4)' })], edges: [[0, 1]], home: 0 }, title: '<i>t</i>' });
+    out.empty = [W.webHtml({}), W.webHtml(null), W.webHtml({ web: { nodes: [] } }), W.webHtml({ web: 'x' })];
+    out.junk = W.webHtml({ web: { nodes: [nd('album', 'A', NaN, Infinity), { type: 'artist' }, null, 5], edges: [[0, 99], [1], 'x', null, [0, 0]], home: 7 } });
+    out.menu = Object.keys(W.TYPES).filter(t => !W.TYPES[t].keepOnly);
+    out.webType = W.TYPES.web;
+    const src = fs.readFileSync(process.argv[1], 'utf8');
+    out.src = { filtersMenu: src.includes('.filter(t => !TYPES[t].keepOnly)'), noFill: src.includes("b.type !== 'text' && b.type !== 'web'"), openGuard: src.includes("/^\\/connections\\?/.test(u)") };
+    console.log(JSON.stringify(out));
+    """
+    r = subprocess.run([node, "-e", WEB_JS, CANVAS], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        chk(False, "the Web block runs under node: " + (r.stderr or "")[:300])
+    else:
+        o = json.loads(r.stdout)
+        g = o["good"]
+        chk('<svg viewBox="' in g and 'preserveAspectRatio="xMidYMid meet"' in g, "a kept web is one SVG that scales with its block")
+        chk(g.count("<image ") == 2 and 'href="https://cdn-images.dzcdn.net/a.jpg"' in g, "records and artists with a picture show it; one with none does not get an <image>")
+        chk(g.count("<line ") == 4 and g.count('class="soft"') == 2, "every join is drawn; label and genre joins are dashed")
+        chk('class="fr home alb"' in g and "TVPCO" in g and "Electro" in g and 'class="tag dash"' in g, "the starting record is marked, labels are boxes, genres are dashed boxes")
+        chk('class="ph"' in g, "an artist with no picture shows an initial")
+        chk('data-act="openweb"' in g and "explore ↗" in g and "KOSMOBOTANIKA" in g, "the block has a title and a way back into the live web")
+        h = o["hostile"]
+        chk("<script" not in h and "<img" not in h and "<i>" not in h and "&lt;script&gt;" in h, "names and titles cannot inject markup")
+        chk('onload="alert' not in h and "&quot; onload" in h, "a quote mark in a picture address cannot break out of the attribute")
+        chk("javascript:" not in h and h.count("<image ") == 1, "only https pictures are drawn (a javascript: address is not)")
+        chk("O&#39;Brien" in h and "&amp;" in h, "apostrophes and ampersands are escaped")
+        chk(all("empty web" in x for x in o["empty"]), "no web, an empty one, or junk gives a plain message")
+        chk("NaN" not in o["junk"] and "Infinity" not in o["junk"] and "undefined" not in o["junk"], "junk positions never reach the drawing (no NaN, Infinity or undefined)")
+        chk(o["webType"]["keepOnly"] is True and "web" not in o["menu"] and "quote" in o["menu"], "Web is not in the + menu (it is only kept from Connections); the other blocks still are")
+        chk(o["src"]["filtersMenu"] and o["src"]["noFill"] and o["src"]["openGuard"], "the wall hides 'fill' for a web, and only opens addresses inside Connections")
+web_css = css[css.index("/* a web kept from Connections"):]
+chk(not re.search(r"#[0-9a-fA-F]{3,8}\b", web_css), "the Web block's CSS uses theme tokens only, no hex")
+chk("border-radius:0" in web_css.replace(" ", "") and "box-shadow" not in web_css, "square, no shadows (the house look)")
+
 shutil.rmtree(TMP, ignore_errors=True)
 print(f"\n{'ALL PASSED' if not fails else str(len(fails)) + ' FAILED'}")
 sys.exit(1 if fails else 0)

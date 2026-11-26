@@ -1172,11 +1172,14 @@ IS_LOW_POWER = _platform.machine() == "x86_64"
 # /greenroom page itself works in any mode so it can be developed and
 # reviewed without the flag.
 IS_GR = os.environ.get("MR_GREEN_ROOM") == "1"
+# Hound Dog fork: the trial's room is two tabs, with the wall of blocks switched off. On this fork the wall comes
+# back as a third tab ("Wall"), where kept webs, quotes and mixes live. Set MR_FORK_WALL=0 for the plain trial.
+FORK_WALL = os.environ.get("MR_FORK_WALL", "1") != "0"
 
 
 @app.context_processor
 def _inject_3d():
-    return {"is_3d": IS_3D, "is_low_power": IS_LOW_POWER, "is_gr": IS_GR,
+    return {"is_3d": IS_3D, "is_low_power": IS_LOW_POWER, "is_gr": IS_GR, "fork_wall": FORK_WALL,
             "theme_head": _theme_head()}
 
 
@@ -16196,7 +16199,12 @@ except ImportError:
 # Connections (the neighbourhood of a record: label, genres, other records, similar artists) lives in connections.py.
 try:
     import connections as _connections
-    _connections.register(app)
+    import json as _wall_json
+    _connections.register(app, wall={
+        "load": lambda pid: _room_canvas_load(pid),
+        "save": lambda pid, blocks: set_setting(f"room_canvas:{pid}", _wall_json.dumps({"v": 1, "blocks": blocks})),
+        "well": lambda: (query_one("SELECT id FROM places WHERE is_well=1") or {}).get("id"),
+    })
 except ImportError:
     pass
 

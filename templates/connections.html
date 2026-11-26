@@ -32,6 +32,8 @@
         .cn button:hover { border-color: var(--text); }
         .cn button.go { background: var(--text); color: var(--bg); border-color: var(--text); padding: 11px 16px; }
 
+        #cn-keepmsg a { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
+        .cn__bar .go { background: var(--text); color: var(--bg); border-color: var(--text); }
         .cn-start__row { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 0 14px; }
         .cn-start .go { background: var(--text); color: var(--bg); border-color: var(--text); padding: 11px 16px; }
         .cn-start input[type=text] { margin: 0 0 12px; }
@@ -141,8 +143,9 @@
         </div>
     </section>
 
-    <div class="cn__bar"><span><span id="cn-count"></span> <button id="cn-again" hidden>Start somewhere else</button></span><span id="cn-hint">Click a record or an artist to grow the web and hear it. Drag to move things. Pinch to zoom.</span></div>
+    <div class="cn__bar"><span><span id="cn-count"></span> <button id="cn-again" hidden>Start somewhere else</button> <button id="cn-keep" class="go" hidden title="Keep a picture of this web on your wall">Keep this web</button></span><span id="cn-hint">Click a record or an artist to grow the web and hear it. Drag to move things. Pinch to zoom.</span></div>
     <p class="cn__msg" id="cn-song" hidden></p>
+    <p class="cn__msg" id="cn-keepmsg" hidden></p>
     <p class="cn__msg" id="cn-msg"></p>
 
     <div class="cn-stage" id="cn-stage" hidden>
@@ -444,7 +447,7 @@
       web = await fetchWeb(q);
       g = ConnGraph.create(); els.forEach(el => el.remove()); els.clear(); edgeEls.forEach(x => x.ln.remove()); edgeEls.clear(); sel = null; info(null);
       const res = g.addWeb(web); home = res.center;
-      $('cn-start').hidden = true; stage.hidden = false; $('cn-again').hidden = false; say('');
+      $('cn-start').hidden = true; stage.hidden = false; $('cn-again').hidden = false; $('cn-keep').hidden = false; $('cn-keepmsg').hidden = true; say('');
       $('cn-song').hidden = !web.song;
       if (web.song) $('cn-song').textContent = 'Started from the song “' + web.song.title + '”' + (web.song.artist ? ' by ' + web.song.artist : '') + '. It is marked in the song list.';
       history.replaceState(null, '', '?' + new URLSearchParams(q));
@@ -456,11 +459,32 @@
 
   // ── the start screen: what is playing, a liked song, or an album you type ──
   function showStart(){
-    stage.hidden = true; $('cn-start').hidden = false; $('cn-again').hidden = true; $('cn-song').hidden = true; $('cn-count').textContent = '';
+    stage.hidden = true; $('cn-start').hidden = false; $('cn-again').hidden = true; $('cn-keep').hidden = true; $('cn-keepmsg').hidden = true; $('cn-song').hidden = true; $('cn-count').textContent = '';
     stopPreview(); info(null); history.replaceState(null, '', location.pathname);
   }
   const startMsg = (t, err) => { $('cn-startmsg').textContent = t || ''; $('cn-startmsg').classList.toggle('err', !!err); };
   const startFromSong = song => { startMsg(''); start(Object.fromEntries(ConnStart.query(song).entries())); };
+
+  // ── keep this web: a picture of it (who sits where) goes onto the wall in My Room ──
+  function snapshot(){
+    const h = g.nodes.get(home), all = [...g.nodes.values()];
+    const d = n => Math.hypot(n.x - h.x, n.y - h.y);
+    const list = all.length > 120 ? [h].concat(all.filter(n => n !== h).sort((a, b) => d(a) - d(b)).slice(0, 119)) : all;   // the wall keeps at most 120
+    const at = new Map(list.map((n, i) => [n.key, i]));
+    return { home: at.get(home),
+      nodes: list.map(n => ({ type: n.type, id: n.id, name: n.name, sub: n.sub, image: n.image, year: n.year, x: n.x, y: n.y })),
+      edges: g.edges.filter(e => at.has(e.a.key) && at.has(e.b.key)).map(e => [at.get(e.a.key), at.get(e.b.key)]) };
+  }
+  $('cn-keep').onclick = async () => {
+    const btn = $('cn-keep'), msg = $('cn-keepmsg'); btn.disabled = true; msg.hidden = false; msg.classList.remove('err'); msg.textContent = 'Keeping it…';
+    try {
+      const r = await fetch('/api/connections/keep', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ web: snapshot() }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { msg.classList.add('err'); msg.textContent = d.error || 'Could not keep it.'; }
+      else msg.innerHTML = (d.placed === 'updated' ? 'Updated on your wall. ' : 'Kept on your wall. ') + '<a href="/room?wall=1">Open the wall →</a>';
+    } catch (e) { msg.classList.add('err'); msg.textContent = 'Could not reach the app.'; }
+    btn.disabled = false;
+  };
 
   $('cn-again').onclick = showStart;
   $('cn-type').onclick = () => { $('cn-ask').hidden = false; $('cn-likedbox').hidden = true; $('cn-a').focus(); };

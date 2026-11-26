@@ -181,6 +181,85 @@ chk(err, "an empty record -> an error message, not an empty list")
 _, _, err = C.preview_for(dz(), "album", 404)         # the fake raises -> network failure
 chk(err and "just now" in err, "a network failure says to try again")
 
+# ── keeping a web on the wall ──
+def node(t, i, name, x=0, y=0, **kw): return dict({"type": t, "id": i, "name": name, "x": x, "y": y}, **kw)
+GOOD = {"nodes": [node("album", 10, "KOSMOBOTANIKA", 0, 0, sub="ETNOBOTANIKA", year="2025", image="https://cdn-images.dzcdn.net/images/cover/x/250x250.jpg"),
+                  node("artist", 70, "Photay", 200.456, -90, image="https://i.scdn.co/image/abc"),
+                  node("label", None, "TVPCO", -150, 60), node("genre", None, "Electro", 0, 180)],
+        "edges": [[0, 1], [0, 2], [0, 3], [1, 0], [2, 2]], "home": 0}
+w = C.clean_web(GOOD)
+chk(w and [n["name"] for n in w["nodes"]] == ["KOSMOBOTANIKA", "Photay", "TVPCO", "Genre"[:0] + "Electro"] and w["home"] == 0, "clean_web keeps a good web")
+chk(w["edges"] == [[0, 1], [0, 2], [0, 3]], f"edges: repeated and self-joined ones dropped, each pair in order ({w['edges']})")
+chk(w["nodes"][1]["x"] == 200.5 and w["nodes"][0]["image"].startswith("https://cdn-images.dzcdn.net/") and w["nodes"][1]["image"].startswith("https://i.scdn.co/"), "positions rounded; Deezer and Spotify pictures kept")
+chk(w["nodes"][2]["id"] is None and w["nodes"][0]["id"] == 10, "labels and genres carry no id; records and artists keep theirs")
+import copy
+def tweak(f):
+    g = copy.deepcopy(GOOD); f(g); return C.clean_web(g)
+for bad in ["http://cdn.dzcdn.net/x.jpg", "https://evil.com/x.jpg", "https://dzcdn.net.evil.com/x.jpg", "https://cdn.dzcdn.net@evil.com/x.jpg",
+            "https://evildzcdn.net/x.jpg", "javascript:alert(1)", "data:image/png;base64,AA", "https://cdn.dzcdn.net/x.jpg\"onload=\"alert(1)", "https://cdn.dzcdn.net/" + "a" * 600]:
+    r = tweak(lambda g: g["nodes"][0].update(image=bad))
+    chk(r and r["nodes"][0]["image"] == "", f"picture address refused, node kept: {bad[:48]!r}")
+r = tweak(lambda g: g["nodes"][0].update(name='<img src=x onerror=alert(1)>  \n  Title'))
+chk(r and r["nodes"][0]["name"] == "<img src=x onerror=alert(1)> Title", "names are tidied to one line and length-capped (the page escapes them when drawing)")
+chk(len(tweak(lambda g: g["nodes"][0].update(name="x" * 900))["nodes"][0]["name"]) == 200, "a very long name is cut")
+chk(tweak(lambda g: g["nodes"][0].update(year="19xx"))["nodes"][0]["year"] == "", "a year must be four digits")
+r = tweak(lambda g: g["nodes"].insert(2, {"type": "playlist", "id": 1, "name": "x", "x": 0, "y": 0}))
+chk(r and [n["type"] for n in r["nodes"]] == ["album", "artist", "label", "genre"], "an unknown node type is dropped")
+r = tweak(lambda g: (g["nodes"].insert(0, node("artist", "abc", "Bad id")), g.update(home=1)))
+chk(r and r["nodes"][0]["name"] == "KOSMOBOTANIKA" and r["home"] == 0, "an artist with no usable id is dropped, and home still points at the right node")
+r = tweak(lambda g: g.update(edges=[[0, 1], [0, 99], ["a", 1], [1], None, [-5, 0]]))
+chk(r and r["edges"] == [[0, 1]], "edges that point nowhere are dropped")
+for bad_xy in [float("nan"), float("inf"), 1e9, "x", None]:
+    r = tweak(lambda g: g["nodes"][1].update(x=bad_xy))
+    chk(r and [n["name"] for n in r["nodes"]] == ["KOSMOBOTANIKA", "TVPCO", "Electro"] and r["home"] == 0, f"a node with a bad position is dropped: {bad_xy!r}")
+chk(tweak(lambda g: g.update(home=2)) is None, "home must be a record or an artist, not a label")
+chk(tweak(lambda g: g.update(home=99)) is None and tweak(lambda g: g.update(home="x")) is None and tweak(lambda g: g.pop("home")) is None, "home must point at a real node")
+chk(tweak(lambda g: g["nodes"][0].update(name="")) is None, "if home itself is unusable, the web is refused")
+chk(C.clean_web({"nodes": [node("album", 1, "n%d" % i) for i in range(C.WEB_MAX_NODES + 1)], "edges": [], "home": 0}) is None, "too many nodes is refused, not silently cut")
+chk(all(C.clean_web(x) is None for x in [None, [], "x", 5, {}, {"nodes": "x"}, {"nodes": [], "home": 0}]), "junk is refused")
+big = {"nodes": [node("album", i + 1, "n%d" % i) for i in range(C.WEB_MAX_NODES)], "edges": [[0, j] for j in range(1, C.WEB_MAX_NODES)] + [[a, b] for a in range(1, 40) for b in range(a + 1, 40)], "home": 0}
+chk(len(C.clean_web(big)["edges"]) == C.WEB_MAX_EDGES, "edges are capped")
+chk(C.clean_web(GOOD) == C.clean_web(copy.deepcopy(GOOD)) and GOOD["nodes"][1]["x"] == 200.456, "cleaning is repeatable and does not change what it was given")
+
+# putting it on the wall
+wb, how = C.put_web_on_wall([], w, "kAAA")
+chk(how == "added" and wb[0]["type"] == "web" and wb[0]["y"] == 120 and wb[0]["x"] == 32 and (wb[0]["w"], wb[0]["h"]) == (680, 500), "an empty wall: the web goes in at the top")
+chk(wb[0]["data"]["url"] == "/connections?kind=album&id=10" and wb[0]["data"]["title"] == "KOSMOBOTANIKA" and wb[0]["data"]["kind"] == "album" and wb[0]["data"]["rid"] == 10, "the block knows how to open its live web (always inside the app)")
+chk(wb[0]["id"] == "kAAA" and wb[0]["z"] == 1, "the block gets the id it was given")
+wall = [{"id": "a", "type": "text", "x": 0, "y": 100, "w": 300, "h": 205, "z": 5, "data": {}}, "junk", None]
+wb, how = C.put_web_on_wall(wall, w, "kBBB")
+chk(how == "added" and len(wb) == 2 and wb[1]["y"] == 336 and wb[1]["y"] % 8 == 0 and wb[1]["z"] == 2, f"it lands below what is there, on the 8px grid ({wb[1]['y']}); junk entries are dropped")
+chk(wall[0] == {"id": "a", "type": "text", "x": 0, "y": 100, "w": 300, "h": 205, "z": 5, "data": {}}, "existing blocks are untouched")
+moved = copy.deepcopy(wb); moved[1].update(x=700, y=900, w=640); moved[1]["data"]["caption"] = "my note"
+w2 = C.clean_web(dict(GOOD, nodes=GOOD["nodes"] + [node("artist", 71, "Darkside", 5, 5)]))
+wb2, how2 = C.put_web_on_wall(moved, w2, "kCCC")
+chk(how2 == "updated" and len(wb2) == 2 and len(wb2[1]["data"]["web"]["nodes"]) == 5, "keeping the same record again refreshes its web instead of adding a second block")
+chk((wb2[1]["x"], wb2[1]["y"], wb2[1]["w"]) == (700, 900, 640) and wb2[1]["data"]["caption"] == "my note" and wb2[1]["id"] == wb[1]["id"], "…and its place, size, caption and id stay as the person left them")
+other = C.clean_web({"nodes": [node("artist", 10, "Same id, different kind")], "edges": [], "home": 0})
+_, how3 = C.put_web_on_wall(moved, other, "kDDD")
+chk(how3 == "added", "an artist and an album that share a number are not the same record")
+
+# the route, with a stand-in wall
+from flask import Flask
+store = {"blocks": [], "saved": 0}
+fake_wall = {"load": lambda pid: {"v": 1, "blocks": list(store["blocks"])}, "save": lambda pid, b: (store.update(blocks=b, saved=store["saved"] + 1)),
+             "well": lambda: 7}
+def mini_app(wall):
+    a = Flask(__name__); C.register(a, wall=wall); return a.test_client()
+mc = mini_app(fake_wall)
+r = mc.post("/api/connections/keep", json={"web": GOOD})
+chk(r.status_code == 200 and r.get_json() == {"ok": True, "placed": "added", "pid": 7, "n": 1} and store["blocks"][0]["type"] == "web", "POST /api/connections/keep adds it to the wall")
+r = mc.post("/api/connections/keep", json={"web": GOOD})
+chk(r.get_json()["placed"] == "updated" and len(store["blocks"]) == 1 and store["saved"] == 2, "keeping it twice updates, never duplicates")
+n0 = store["saved"]
+chk(mc.post("/api/connections/keep", json={"web": {"nodes": [], "home": 0}}).status_code == 400 and store["saved"] == n0, "a bad web is refused and nothing is saved")
+chk(mc.post("/api/connections/keep", data="nope", content_type="text/plain").status_code == 400, "a non-JSON body is a 400, not a crash")
+chk(mc.post("/api/connections/keep", json={}).status_code == 400, "no web -> 400")
+chk(mini_app(dict(fake_wall, well=lambda: None)).post("/api/connections/keep", json={"web": GOOD}).status_code == 404, "no room to keep it in -> 404")
+chk(mini_app(None).post("/api/connections/keep", json={"web": GOOD}).status_code == 503, "no wall wired in -> 503, plainly")
+store["blocks"] = [{"id": "x%d" % i, "type": "text", "x": 0, "y": i, "w": 8, "h": 8, "z": 1, "data": {}} for i in range(400)]
+chk(mc.post("/api/connections/keep", json={"web": GOOD}).status_code == 400, "a full wall (400 blocks) refuses another")
+
 # ── the route and the page ──
 import app
 app._cat_health_last_check[0] = __import__("time").time() + 1e9
@@ -211,6 +290,8 @@ chk("/static/js/conn_start.js" in html and "cn-now" in html and "cn-liked" in ht
 chk("/api/spotify/saved-tracks" in html and "/api/seinnteoir/state" in html, "page reads the liked songs and the player's state from the app's own endpoints")
 chk("history.replaceState" in html and "p.get('title')" in html, "a song-started web has a link that reloads to the same web")
 chk("cn-song mine" not in html and ".cn-song.mine" in html, "the song you started from is marked in the song list")
+chk("cn-keep" in html and "/api/connections/keep" in html and "/room?wall=1" in html, "page can keep a web and lead to the wall")
+chk("edges: g.edges.filter" in html and "slice(0, 119)" in html, "a very large web is trimmed to the nearest 119 + the start before it is sent")
 chk("Pinch to zoom" in html and "scroll to zoom" not in html.lower(), "the hint says pinch, not scroll")
 
 print("")

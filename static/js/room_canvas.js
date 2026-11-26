@@ -24,6 +24,7 @@ window.MRRoomCanvas = (function () {
     playlist: { label: 'Playlist', hint: 'a place, a set, or records you pick',    w: 380, h: 380 },
     mix:      { label: 'Mix',      hint: 'a mix or video link that plays here',    w: 440, h: 280 },
     link:     { label: 'Link',     hint: 'any web page, as a card',                w: 320, h: 200 },
+    web:      { label: 'Web',      hint: 'a map kept from Connections',            w: 680, h: 500, keepOnly: true },
   };
   const snap = v => Math.max(0, Math.round(v / SNAP) * SNAP);
   const uid = () => 'k' + Math.random().toString(36).slice(2, 9);
@@ -65,6 +66,31 @@ window.MRRoomCanvas = (function () {
   }
   // a quote's time: the one typed in, else the one its link carries
   const quoteAt = d => (d.at != null ? d.at : (d.url ? startFromUrl(d.url) : null));
+
+  // A kept web's inside, as an SVG drawn from the picture the page took (who sits where). It scales with the
+  // block, needs no network to lay out, and everything in it is escaped. `d.web` = { nodes:[{type,name,sub,image,year,x,y}], edges:[[i,j]], home }.
+  function webHtml(d) {
+    const w = d && d.web, nodes = (w && Array.isArray(w.nodes) ? w.nodes : []).map(n => (n && typeof n === 'object' ? n : null));   // a bad entry keeps its place, so the joins still point the right way
+    if (!nodes.some(Boolean)) return '<div class="rc-web__empty">An empty web.</div>';
+    const num = v => (typeof v === 'number' && isFinite(v) ? v : 0);
+    const S = n => (n === nodes[w.home] ? 84 : (n.type === 'artist' || n.type === 'album' ? 56 : 0));
+    const label = n => (n.type === 'label' || n.type === 'genre');
+    const halfW = n => (label(n) ? Math.min(110, 10 + String(n.name || '').length * 4.2) : Math.max(S(n) / 2, Math.min(60, String(n.name || '').length * 3.6)));
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    nodes.forEach(n => { if (!n) return; const hw = halfW(n), hh = label(n) ? 14 : S(n) / 2 + 22; x0 = Math.min(x0, num(n.x) - hw); x1 = Math.max(x1, num(n.x) + hw); y0 = Math.min(y0, num(n.y) - (label(n) ? 14 : S(n) / 2)); y1 = Math.max(y1, num(n.y) + hh); });
+    const pad = 24, vb = [x0 - pad, y0 - pad - 30, (x1 - x0) + pad * 2, (y1 - y0) + pad * 2 + 30].map(v => Math.round(v * 10) / 10);
+    const lines = (Array.isArray(w.edges) ? w.edges : []).map(e => { const a = nodes[e && e[0]], b = nodes[e && e[1]]; return a && b ? `<line x1="${num(a.x)}" y1="${num(a.y)}" x2="${num(b.x)}" y2="${num(b.y)}"${label(a) || label(b) ? ' class="soft"' : ''}/>` : ''; }).join('');
+    const things = nodes.map((n, i) => {
+      if (!n) return '';
+      const x = num(n.x), y = num(n.y), home = i === w.home;
+      if (label(n)) { const hw = halfW(n); return `<g transform="translate(${x} ${y})"><rect class="tag${n.type === 'genre' ? ' dash' : ''}" x="${-hw}" y="-13" width="${hw * 2}" height="26"/><text class="sm" y="4" text-anchor="middle">${esc(n.name)}</text></g>`; }
+      const s = S(n), img = /^https:\/\//.test(n.image || '') ? `<image href="${esc(n.image)}" x="${-s / 2}" y="${-s / 2}" width="${s}" height="${s}" preserveAspectRatio="xMidYMid slice"/>` : `<text class="ph" y="8" text-anchor="middle">${esc(String(n.name || '?').charAt(0))}</text>`;
+      return `<g transform="translate(${x} ${y})"><rect class="fr${home ? ' home' : ''}${n.type === 'album' ? ' alb' : ''}" x="${-s / 2}" y="${-s / 2}" width="${s}" height="${s}"/>${img}<text class="nm${home ? ' big' : ''}" y="${s / 2 + (home ? 20 : 16)}" text-anchor="middle">${esc(n.name)}</text></g>`;
+    }).join('');
+    const home = nodes[w.home] || {};
+    return `<div class="rc-web"><svg viewBox="${vb.join(' ')}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${esc('A web around ' + (home.name || 'a record'))}"><g class="ln">${lines}</g>${things}</svg>` +
+      `<div class="rc-web__bar"><span class="rc-web__t">${esc(d.title || home.name || '')}</span><button class="rc-web__go" data-act="openweb" title="Open it live, and keep exploring">explore ↗</button></div></div>`;
+  }
 
   // a quote block's inside, as markup. Pure (and everything typed is escaped), so it can be tested without a page.
   function quoteHtml(d) {
@@ -163,7 +189,7 @@ window.MRRoomCanvas = (function () {
     const stage = host.querySelector('#rc-stage'), empty = host.querySelector('#rc-empty');
     const addBtn = host.querySelector('#rc-add'), addMenu = host.querySelector('#rc-addmenu');
     const sheet = host.querySelector('#rc-sheet'), status = host.querySelector('#rc-status');
-    addMenu.innerHTML = Object.keys(TYPES).map(t => `<button data-type="${t}"><b>${esc(TYPES[t].label)}</b><small>${esc(TYPES[t].hint)}</small></button>`).join('');
+    addMenu.innerHTML = Object.keys(TYPES).filter(t => !TYPES[t].keepOnly).map(t => `<button data-type="${t}"><b>${esc(TYPES[t].label)}</b><small>${esc(TYPES[t].hint)}</small></button>`).join('');
 
     // ── persistence ──
     async function load() {
@@ -226,7 +252,7 @@ window.MRRoomCanvas = (function () {
       el.innerHTML = `
         <div class="rc-tools">
           <span class="rc-tools__type">${esc(TYPES[b.type].label)}</span>
-          ${b.type !== 'text' ? '<button data-act="fill" title="Fill this block">fill</button>' : ''}
+          ${b.type !== 'text' && b.type !== 'web' ? '<button data-act="fill" title="Fill this block">fill</button>' : ''}
           <button data-act="down" title="Send back">↓</button><button data-act="up" title="Bring forward">↑</button>
           <button data-act="del" title="Remove this block">✕</button>
         </div>
@@ -262,6 +288,8 @@ window.MRRoomCanvas = (function () {
               <div class="rc-pl__acts"><button data-act="playall" title="Play these, in order (replaces the cue)">▶ play all</button><button data-act="cueall" title="Add these to the cue">＋ cue all</button></div></div>
             <div class="rc-pl__rows">${ts.map((t, i) => `<div class="rc-pl__row" data-i="${i}"><img class="rc-pl__cover" src="${coverUrl(t, 192)}" alt="" loading="lazy" draggable="false"><div class="rc-pl__meta"><div class="rc-pl__t" data-act="open" data-tid="${t.id}">${esc(t.title || 'Untitled')}</div><div class="rc-pl__a">${esc(t.artist_name || t.artist || '')}</div></div><button class="rc-pl__play" data-act="playrow" data-i="${i}" title="Play now">▶</button></div>`).join('')}</div>
           </div>` : `<button class="rc-fillme" data-act="fill">+ choose a playlist</button>`;
+      } else if (b.type === 'web') {
+        body.innerHTML = webHtml(d);
       } else if (b.type === 'mix') {
         const em = d.url && d.embed !== false ? embedFor(d.url, d.start) : null;
         body.innerHTML = !d.url ? `<button class="rc-fillme" data-act="fill">+ paste a mix or video link</button>`
@@ -447,6 +475,7 @@ window.MRRoomCanvas = (function () {
       else if (a === 'cueall') { cue((b.data.tracks || []).map(toItem), false); flash(act, '✓ cued'); }
       else if (a === 'playrow') playNow(toItem((b.data.tracks || [])[+act.dataset.i]));
       else if (a === 'open') { const tid = +(act.dataset.tid || (b.data.track || {}).id); if (tid && opts.openTrack) { try { opts.openTrack(tid); } catch (_) { location.href = `/room?track=${tid}`; } } }
+      else if (a === 'openweb') { const u = String((b.data || {}).url || ''); if (/^\/connections\?/.test(u)) location.href = u; }
       else if (a === 'openurl') openUrl(b.type === 'quote' ? withStart(b.data.url, quoteAt(b.data)) : b.data.url);
     });
     function flash(btn, txt) { const o = btn.textContent; btn.textContent = txt; setTimeout(() => { btn.textContent = o; }, 1200); }
@@ -510,5 +539,5 @@ window.MRRoomCanvas = (function () {
     return { reload: load, addBlock, get blocks() { return blocks; } };
   }
 
-  return { mount, TYPES, embedFor, fmtClock, parseClock, startFromUrl, withStart, quoteHtml };
+  return { mount, TYPES, embedFor, fmtClock, parseClock, startFromUrl, withStart, quoteHtml, webHtml };
 })();

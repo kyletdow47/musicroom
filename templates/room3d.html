@@ -12,6 +12,7 @@
 <script src="/static/js/room_canvas.js"></script>
 <script src="/static/js/page_tones.js"></script>
 {{ theme_head|safe }}
+<script>window.MR_WALL = {{ 'true' if fork_wall else 'false' }};   /* the fork's third tab, "Wall" (app.py FORK_WALL) */</script>
 <style>
   :root{
     --gold:#f2efe8; --ink:#f2efe8; --muted:#9b968a; --oxblood:#e8554a;
@@ -1177,6 +1178,7 @@
          are out of this build — their code stays, nothing leads to it. #}
       <button class="r3d-btn r3d-btn--home active" data-layout="grid" title="Your records" aria-label="Your records"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="9.6"/><circle cx="12" cy="12" r="3.5"/><circle cx="12" cy="12" r=".9" fill="currentColor" stroke="none"/><path d="M5.5 9.3a7.1 7.1 0 0 1 3.8-3.8" stroke-linecap="round"/></svg></button>
       <button class="r3d-btn" data-layout="grupa" title="Your grúpaí: playlists that hold anything — records from this room, tracks from Spotify and SoundCloud, labels, other music rooms">Grúpaí</button>
+      {% if fork_wall %}<button class="r3d-btn" data-layout="blocks" title="Your own wall: kept webs, quotes, words, images, mixes, links — make blocks, drag them, size them">Wall</button>{% endif %}
       <button class="r3d-btn" data-layout="shop" id="r3d-shopbtn" hidden title="Records you have borrowed from the shop">Borrowed</button>
       {% else %}
       <button class="r3d-btn active" data-layout="cloud">Cloud</button>
@@ -1517,11 +1519,13 @@ function emptyTrialRoom(){
   document.body.classList.add('r3d-emptyroom');     // (the room's own strip needs records to work)
   row.innerHTML = `<button type="button" class="sim-tab on" data-to="records">Your records</button>
     <button type="button" class="sim-tab" data-to="grupa">Grúpaí</button>
+    ${window.MR_WALL ? '<button type="button" class="sim-tab" data-to="wall">Wall</button>' : ''}
     <button type="button" class="sim-tab" data-to="shop" hidden>Borrowed</button>`;
   document.body.appendChild(row);
   const shop = document.getElementById('r3d-shop'), grupa = document.getElementById('r3d-grupa'), own = document.getElementById('r3d-own');
   const go = href => { location.href = String(href || '').replace(/([?&])overlay=1&?/, '$1').replace(/[?&]$/, ''); };
-  let shopApi = null, grupaApi = null, ownN = 0, cur = 'records';
+  let shopApi = null, grupaApi = null, wallApi = null, ownN = 0, cur = 'records';
+  const wall = document.getElementById('r3d-blocks');          // the fork's Wall: the same blocks wall, mounted without needing records
   const to = which => {
     cur = which;
     row.querySelectorAll('[data-to]').forEach(b => b.classList.toggle('on', b.dataset.to === which));
@@ -1529,12 +1533,14 @@ function emptyTrialRoom(){
     own.classList.toggle('on', which === 'records' && ownN > 0);
     shop.classList.toggle('on', which === 'shop');
     grupa.classList.toggle('on', which === 'grupa');
+    if (window.MR_WALL) { wall.classList.toggle('on', which === 'wall'); if (which === 'wall' && !wallApi && window.MRRoomCanvas) wallApi = window.MRRoomCanvas.mount(wall, { placeId: PLACE_ID }); }
     if (which === 'shop' && window.SimShop) { if (!shopApi) shopApi = SimShop.mountMine(document.getElementById('r3d-shop-in'), { openPage: go }); else shopApi.refresh(); }
     if (which === 'grupa' && window.GrupaUI) { if (!grupaApi) grupaApi = GrupaUI.mount(document.getElementById('r3d-grupa-in'), { gid: 0, inRoom: true, openTrack: ()=>{}, openPage: go }); else grupaApi.refresh(); }
   };
   row.addEventListener('click', e => { const b = e.target.closest('[data-to]'); if (b) to(b.dataset.to); });
   const ask = new URLSearchParams(location.search);
   if (ask.has('grupa')) to('grupa');
+  if (window.MR_WALL && ask.has('wall')) to('wall');
   if (window.SimShop) SimShop.me().then(m => {
     if (!m || !m.on) return;
     row.querySelector('[data-to="shop"]').hidden = false;
@@ -1542,7 +1548,7 @@ function emptyTrialRoom(){
     let first = true;
     SimShop.mountBought(document.getElementById('r3d-own-in'), { openPage: go, onCount: n => {
       ownN = n;
-      if (first){ first = false; if (!ask.has('grupa')) to(n && !ask.has('shop') ? 'records' : 'shop'); }
+      if (first){ first = false; if (!ask.has('grupa') && !ask.has('wall')) to(n && !ask.has('shop') ? 'records' : 'shop'); }
       else if (cur === 'records') to('records');
     } });
   });
@@ -2864,7 +2870,7 @@ function fitCamera(front, animate){
 function setLayout(name){
   // the trial build has two views only; anything else that asks for one (an
   // old remembered view, a saved preset, a structure) lands in the grid
-  if (window.MR_GR && name !== 'grid' && name !== 'grupa' && name !== 'shop') name = 'grid';
+  if (window.MR_GR && name !== 'grid' && name !== 'grupa' && name !== 'shop' && !(window.MR_WALL && name === 'blocks')) name = 'grid';
   if (name !== 'grid' && typeof closeGrupaPanel === 'function') closeGrupaPanel();
   if (typeof pileView !== 'undefined' && pileView) closePileView(false);   // leaving the open pile
   const wasGrid = (curLayout === 'grid'), wasBlocks = (curLayout === 'blocks'), wasGrupa = (curLayout === 'grupa'), wasShop = (curLayout === 'shop');
@@ -6087,7 +6093,7 @@ function restoreView(){
   let v = null;
   try { v = JSON.parse(localStorage.getItem(('mr_room_view_'+PLACE_ID)) || 'null'); } catch(_){}
   let layout = (v && LAYOUTS[v.layout]) ? v.layout : 'grid';
-  if (window.MR_GR && layout !== 'grupa') layout = 'grid';        // the trial: the grid is home
+  if (window.MR_GR && layout !== 'grupa' && !(window.MR_WALL && layout === 'blocks')) layout = 'grid';        // the trial: the grid is home (the fork also keeps the wall)
   if (v && v.facet && v.facet.type && v.facet.value){ facet = v.facet; searchInput.value = ''; }
   if (v && v.cols >= 1 && v.cols <= 12){ gridCols = v.cols; colsSlider.value = String(v.cols); colsVal.textContent = String(v.cols); }
   rebuildOrder();
@@ -6118,6 +6124,8 @@ if (curLayout === 'grid'){
   if (dl && idxById.has(dl)) setTimeout(()=>openDetail(idxById.get(dl)), 650);
   // ?grupa=<id> (or ?grupa=all): arrive in the Grúpaí tab — what /grupa leads to in the trial
   else if (window.MR_GR && ask.has('grupa')) openGrupaInTab(parseInt(ask.get('grupa')) || 0);
+  // ?wall=1: arrive on the wall (the fork's third tab; Connections leads here after keeping a web)
+  else if (window.MR_WALL && ask.has('wall')) setLayout('blocks');
   // ?shop=1: arrive in "From the shop" (the credits in the top bar lead here)
   else if (window.MR_GR && ask.has('shop')) { const b = document.getElementById('r3d-shopbtn'); if (b) b.hidden = false; setLayout('shop'); }
 }
