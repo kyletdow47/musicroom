@@ -274,7 +274,10 @@ window.MRRoomCanvas = (function () {
         <button data-hud="fit" title="Fit everything on screen">Fit</button><button data-hud="in" title="Zoom in">+</button><button data-hud="out" title="Zoom out">−</button>
         <button data-hud="depth" id="rc-depth" title="Depth: blocks sit on layers, and the view looks around as you move">3D</button>
       </div>
-      <div class="rc-empty" id="rc-empty"><div class="rc-empty__t">Nothing here yet.</div><div class="rc-empty__b">Make a block, drag it where you want it, pull its corner to size it, fill it.</div></div>
+      <div class="rc-empty" id="rc-empty"><div class="rc-intro" id="rc-intro">
+        <p class="rc-intro__l"></p><p class="rc-intro__l"></p>
+        <div class="rc-intro__go" hidden><button data-intro="music">[ Add music ]</button><button data-intro="block">[ Add a block ]</button></div>
+        <button class="rc-intro__skip" data-intro="skip">[ Skip ]</button></div></div>
       <div class="rc-addwrap">
         <span class="rc-status" id="rc-status"></span>
         <button class="rc-add" id="rc-add" title="Make a new block">+ block</button>
@@ -420,6 +423,36 @@ window.MRRoomCanvas = (function () {
       fire('select', id ? byId(id) : null);
     }
 
+    // ── the intro: an empty wall says one quiet thing, typed out letter by letter (once a visit), with a skip ──
+    const INTRO = ['Everything you save is connected to something.', '   Start with a record, a line someone said, or a picture.'];
+    let introT = 0, introLine = 0, introChar = 0;
+    const introSeen = () => { try { return sessionStorage.getItem('rc_intro') === '1'; } catch (_) { return false; } };
+    function introEls() { const root = empty.querySelector('#rc-intro'); return { lines: [...root.querySelectorAll('.rc-intro__l')], go: root.querySelector('.rc-intro__go'), skip: root.querySelector('.rc-intro__skip') }; }
+    function introFinish() {
+      clearTimeout(introT); introT = 0; const e = introEls();
+      e.lines.forEach((l, i) => { l.textContent = INTRO[i]; l.classList.remove('typing'); }); e.go.hidden = false; e.skip.hidden = true; introLine = 2;
+      try { sessionStorage.setItem('rc_intro', '1'); } catch (_) {}
+    }
+    function stopIntro() { clearTimeout(introT); introT = 0; introLine = 0; introChar = 0; }
+    function typeIntro() {
+      if (introT || introLine >= 2) return;                                // already typing, or finished
+      if (reduced || introSeen()) { introFinish(); return; }
+      const e = introEls(); e.go.hidden = true; e.skip.hidden = false;
+      const step = () => {
+        introT = 0; const text = INTRO[introLine]; introChar++; e.lines[introLine].textContent = text.slice(0, introChar); e.lines[introLine].classList.add('typing');
+        if (introChar >= text.length) { e.lines[introLine].classList.remove('typing'); introLine++; introChar = 0; if (introLine >= 2) { introFinish(); return; } introT = setTimeout(step, 520); }
+        else introT = setTimeout(step, 22 + Math.floor(Math.random() * 34));
+      };
+      step();
+    }
+    empty.addEventListener('click', e => {
+      const b = e.target.closest('[data-intro]'); if (!b) return; const a = b.dataset.intro;
+      e.stopPropagation();                                                // (the page closes the + menu on any outside click; this click opens it)
+      if (a === 'skip') introFinish();
+      else if (a === 'music') { if (window.WallMusic) window.WallMusic.openStart(null); }
+      else if (a === 'block') addBtn.click();
+    });
+
     // ── numbers: each block gets the next one, once, and keeps it (like an archive's index) ──
     let counter = 0;                                                       // the highest number ever given out on this wall (the server keeps it too)
     function numberAll() {
@@ -435,7 +468,7 @@ window.MRRoomCanvas = (function () {
       const keep = new Set();
       blocks.forEach(b => { keep.add(b.id); let el = stage.querySelector(`[data-id="${b.id}"]`); if (!el) { el = makeEl(b); stage.appendChild(el); } place(b, el); if (el.dataset.sig !== sig(b)) { el.dataset.sig = sig(b); fillBody(b, el); } });
       stage.querySelectorAll('.rc-block').forEach(el => { if (!keep.has(el.dataset.id)) el.remove(); });
-      empty.style.display = blocks.length ? 'none' : '';
+      empty.style.display = blocks.length ? 'none' : ''; if (!blocks.length && loaded) typeIntro(); else if (blocks.length) stopIntro();
       select(sel); drawLinks();
     }
     const sig = b => b.type + '|' + b.n + '|' + JSON.stringify(b.data);
@@ -905,6 +938,7 @@ window.MRRoomCanvas = (function () {
       panTo(wx, wy) { const v = viewSize(); cam.x = v.W / 2 - wx * cam.k; cam.y = v.H / 2 - wy * cam.k; applyCam(); },
     };
     if (window.WallMusic) window.WallMusic.attach(api);
+    if (window.WallIndex) window.WallIndex.attach(api);
     return api;
   }
 

@@ -225,7 +225,7 @@
     // ── the quick card for a selected record or artist, and its full page (the record) ──
     // Both show the same songs and the same "Add to My Room", so those are drawn into whichever is open (see data-prev / data-add).
     var previews = {}, adds = {}, waiting = '', audio = new Audio(), playing = null; audio.preload = 'none';
-    var rec = document.createElement('div'); rec.className = 'rc-rec'; host.appendChild(rec);
+    var rec = document.createElement('div'); rec.className = 'rc-page'; host.appendChild(rec);
     var recId = null, pad = function (n) { return n > 0 ? String(n).padStart(3, '0') : ''; };
     var panes = function () { return [info, rec]; };
     var activeRoot = function () { return rec.classList.contains('on') ? rec : info; };
@@ -310,26 +310,26 @@
     // left: what is joined to it (your words, quotes, links, pictures, videos) and the music near it; middle: the cover; right: the facts, the songs, and keeping it
     function mineHtml(it) {
       var d = it.data || {}, body;
-      if (it.type === 'quote') body = '<p class="rc-rec__q">“' + esc(d.text || '') + '”</p><p class="rc-rec__by">' + esc([d.who, d.source].filter(Boolean).join(', ')) + (safeUrl(d.url) ? ' <button data-a="openurl" data-url="' + esc(d.url) + '">[ open ]</button>' : '') + '</p>';
-      else if (it.type === 'text') body = (d.heading ? '<p class="rc-rec__h">' + esc(d.heading) + '</p>' : '') + (d.body ? '<p>' + esc(d.body) + '</p>' : '');
+      if (it.type === 'quote') body = '<p class="rc-page__q">“' + esc(d.text || '') + '”</p><p class="rc-page__by">' + esc([d.who, d.source].filter(Boolean).join(', ')) + (safeUrl(d.url) ? ' <button data-a="openurl" data-url="' + esc(d.url) + '">[ open ]</button>' : '') + '</p>';
+      else if (it.type === 'text') body = (d.heading ? '<p class="rc-page__h">' + esc(d.heading) + '</p>' : '') + (d.body ? '<p>' + esc(d.body) + '</p>' : '');
       else if (it.type === 'image') body = /^(https?:\/\/|\/)/.test(d.src || '') ? '<img src="' + esc(d.src) + '" alt="' + esc(d.alt || '') + '">' : '<p>a picture</p>';
-      else if (it.type === 'mix' || it.type === 'link') body = '<p class="rc-rec__h">' + esc(d.title || d.url || 'a link') + '</p>' + (safeUrl(d.url) ? '<button data-a="openurl" data-url="' + esc(d.url) + '">[ open ]</button>' : '');
+      else if (it.type === 'mix' || it.type === 'link') body = '<p class="rc-page__h">' + esc(d.title || d.url || 'a link') + '</p>' + (safeUrl(d.url) ? '<button data-a="openurl" data-url="' + esc(d.url) + '">[ open ]</button>' : '');
       else body = '<p>' + esc(it.type) + '</p>';
-      return '<article class="rc-rec__item"><span class="rc-rec__no">' + pad(it.n) + (it.line ? ' · ' + esc(it.line) : '') + '</span>' + body + '</article>';
+      return '<article class="rc-page__item"><span class="rc-page__no">' + pad(it.n) + (it.line ? ' · ' + esc(it.line) : '') + '</span>' + body + '</article>';
     }
     function renderRecord(b) {
       var m = recordModel(b, wall.blocks, wall.links), d = b.data;
-      rec.innerHTML = '<div class="rc-rec__top"><span class="rc-rec__num">' + pad(m.n) + '</span><span class="rc-rec__nav"><button data-a="recprev">[ Prev ]</button><button data-a="recnext">[ Next ]</button><button data-a="recclose">[ Close ]</button></span></div>' +
-        '<div class="rc-rec__cols">' +
-        '<section class="rc-rec__left"><h3>Linked' + (m.mine.length ? ' <i>' + m.mine.length + '</i>' : '') + '</h3>' +
-          (m.mine.length ? m.mine.map(mineHtml).join('') : '<p class="rc-rec__none">Nothing of yours is joined to this yet. Draw a line to it from a quote, a note or a video, or add a note here.</p>') +
-          '<button class="rc-rec__add" data-a="note">[ + Note ]</button><div class="rc-rec__note" hidden><textarea rows="4" maxlength="2000" placeholder="what this makes you think of"></textarea><button data-a="notesave">[ Save ]</button></div>' +
-          (m.near.length ? '<h3>Near <i>' + m.near.length + '</i></h3>' + m.near.map(function (n) { return '<button class="rc-rec__near" data-a="jump" data-id="' + esc(n.id) + '"><span>' + pad(n.n) + '</span>' + esc(n.name) + '</button>'; }).join('') : '') + '</section>' +
-        '<section class="rc-rec__mid">' + (m.image ? '<img src="' + esc(m.image) + '" alt="' + esc(m.title) + '">' : '<div class="rc-rec__ph">' + esc((m.title || '?').charAt(0)) + '</div>') + '</section>' +
-        '<section class="rc-rec__right"><h2>' + esc(m.title) + '</h2>' + (m.song ? '<p class="rc-rec__song">Started from the song “' + esc(m.song.title) + '”.</p>' : '') +
-          '<dl class="rc-rec__facts">' + m.facts.map(function (f) { return '<div><dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd></div>'; }).join('') + '</dl>' +
-          '<div class="rc-rec__prev" data-prev></div>' + (d.kind === 'album' ? '<div class="rc-rec__addroom" data-add></div>' : '') +
-          '<div class="rc-rec__links">' + (m.spotify ? '<a href="' + esc(m.spotify) + '" target="_blank" rel="noopener">[ Spotify ↗ ]</a>' : '') + (m.deezer ? '<a href="' + esc(m.deezer) + '" target="_blank" rel="noopener">[ Deezer ↗ ]</a>' : '') + (d.grown ? '' : '<button data-a="grow">[ Grow ]</button>') + '</div></section></div>';
+      rec.innerHTML = '<div class="rc-page__top"><span class="rc-page__num">' + pad(m.n) + '</span><span class="rc-page__nav"><button data-a="recprev">[ Prev ]</button><button data-a="recnext">[ Next ]</button><button data-a="recclose">[ Close ]</button></span></div>' +
+        '<div class="rc-page__cols">' +
+        '<section class="rc-page__left"><h3>Linked' + (m.mine.length ? ' <i>' + m.mine.length + '</i>' : '') + '</h3>' +
+          (m.mine.length ? m.mine.map(mineHtml).join('') : '<p class="rc-page__none">Nothing of yours is joined to this yet. Draw a line to it from a quote, a note or a video, or add a note here.</p>') +
+          '<button class="rc-page__add" data-a="note">[ + Note ]</button><div class="rc-page__note" hidden><textarea rows="4" maxlength="2000" placeholder="what this makes you think of"></textarea><button data-a="notesave">[ Save ]</button></div>' +
+          (m.near.length ? '<h3>Near <i>' + m.near.length + '</i></h3>' + m.near.map(function (n) { return '<button class="rc-page__near" data-a="jump" data-id="' + esc(n.id) + '"><span>' + pad(n.n) + '</span>' + esc(n.name) + '</button>'; }).join('') : '') + '</section>' +
+        '<section class="rc-page__mid">' + (m.image ? '<img src="' + esc(m.image) + '" alt="' + esc(m.title) + '">' : '<div class="rc-page__ph">' + esc((m.title || '?').charAt(0)) + '</div>') + '</section>' +
+        '<section class="rc-page__right"><h2>' + esc(m.title) + '</h2>' + (m.song ? '<p class="rc-page__song">Started from the song “' + esc(m.song.title) + '”.</p>' : '') +
+          '<dl class="rc-page__facts">' + m.facts.map(function (f) { return '<div><dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd></div>'; }).join('') + '</dl>' +
+          '<div class="rc-page__prev" data-prev></div>' + (d.kind === 'album' ? '<div class="rc-page__addroom" data-add></div>' : '') +
+          '<div class="rc-page__links">' + (m.spotify ? '<a href="' + esc(m.spotify) + '" target="_blank" rel="noopener">[ Spotify ↗ ]</a>' : '') + (m.deezer ? '<a href="' + esc(m.deezer) + '" target="_blank" rel="noopener">[ Deezer ↗ ]</a>' : '') + (d.grown ? '' : '<button data-a="grow">[ Grow ]</button>') + '</div></section></div>';
       loadPreview(b); if (d.kind === 'album') renderAdd(b);
     }
     function openRecord(b) {
@@ -343,7 +343,7 @@
       var c = centreOf(next); wall.panTo(c.x, c.y); openRecord(next);
     }
     function saveNote() {
-      var ta = rec.querySelector('.rc-rec__note textarea'), b = blockById(recId), text = ta && ta.value.trim(); if (!text || !b) return;
+      var ta = rec.querySelector('.rc-page__note textarea'), b = blockById(recId), text = ta && ta.value.trim(); if (!text || !b) return;
       var c = centreOf(b), rects = wall.blocks.map(function (x) { return { x: x.x, y: x.y, w: x.w, h: x.h }; });
       var spot = freeSpot(rects, { x: c.x + 320, y: c.y }, { w: 340, h: 200 }, 30) || { x: c.x + 320, y: c.y };
       var nb = wall.addNode('text', { heading: '', body: text.slice(0, 2000) }, spot, 0, { w: 320, h: 160 });
@@ -357,7 +357,7 @@
       if (act === 'recclose') { closeRecord(); return; }
       if (act === 'recprev' || act === 'recnext') { stepTo(act === 'recnext' ? 1 : -1); return; }
       if (act === 'jump') { var t = blockById(btn.dataset.id); if (t) { var c = centreOf(t); wall.panTo(c.x, c.y); openRecord(t); } return; }
-      if (act === 'note') { var nb = rec.querySelector('.rc-rec__note'); if (nb) { nb.hidden = !nb.hidden; if (!nb.hidden) nb.querySelector('textarea').focus(); } return; }
+      if (act === 'note') { var nb = rec.querySelector('.rc-page__note'); if (nb) { nb.hidden = !nb.hidden; if (!nb.hidden) nb.querySelector('textarea').focus(); } return; }
       if (act === 'notesave') { saveNote(); return; }
       if (act === 'openurl') { var u = safeUrl(btn.dataset.url); if (u) fetch('/api/open-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: u }) }).catch(function () {}); return; }
       if (!b) return;
@@ -399,7 +399,7 @@
         start.classList.remove('on'); say(''); wall.panTo(centreOf(r.center).x, centreOf(r.center).y); wall.select(r.center.id);
       } catch (e) { sm(e.message); }
     }
-    var rowHtml = function (x, i) { return '<div class="rc-row" data-i="' + i + '">' + (x.image ? '<img src="' + esc(x.image) + '" alt="" loading="lazy">' : '<span class="ph"></span>') + '<div><b>' + esc(x.title) + '</b><small>' + esc([x.artist, x.album].filter(Boolean).join(' · ')) + '</small></div></div>'; };
+    var rowHtml = function (x, i) { return '<div class="rc-mrow" data-i="' + i + '">' + (x.image ? '<img src="' + esc(x.image) + '" alt="" loading="lazy">' : '<span class="ph"></span>') + '<div><b>' + esc(x.title) + '</b><small>' + esc([x.artist, x.album].filter(Boolean).join(' · ')) + '</small></div></div>'; };
     function drawLiked() {
       var f = (start.querySelector('#rc-lf').value || '').trim().toLowerCase();
       var list = hits || (f ? liked.filter(function (x) { return (x.title + ' ' + x.artist + ' ' + x.album).toLowerCase().indexOf(f) >= 0; }) : liked), ll = start.querySelector('#rc-ll');
@@ -416,7 +416,7 @@
     }
     start.addEventListener('input', function (e) { if (e.target.id === 'rc-lf') { hits = null; drawLiked(); } });
     start.addEventListener('click', async function (e) {
-      var row = e.target.closest('.rc-row');
+      var row = e.target.closest('.rc-mrow');
       if (row) { var song = row.parentElement._list[+row.dataset.i]; if (song) begin(Object.fromEntries(CS.query(song).entries())); return; }
       var btn = e.target.closest('button'); if (!btn) return; var s = btn.dataset.s;
       if (s === 'close') start.classList.remove('on');

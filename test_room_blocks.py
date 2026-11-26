@@ -313,7 +313,7 @@ if node:
     out.pure = (() => { const before = JSON.stringify(ls); L.add(ls, 'x', 'y'); L.remove(ls, 'a', 'b'); L.dropFor(ls, 'a'); return JSON.stringify(ls) === before; })();
     const src = fs.readFileSync(process.argv[1], 'utf8');
     out.src = { dot: src.includes('class="rc-dot"'), linkBtn: src.includes('data-act="link"'), esc: src.includes("cancelLinking(); closeSheet(); select(null); selectLink(null);"),
-                del: src.includes("selLink && !e.target.matches('input, textarea, [contenteditable]')) { e.preventDefault(); removeLink(selLink)"), noPanOnLine: src.includes("e.target.closest('.rc-links g')"),
+                del: src.includes("selLink && !isTyping(e)) { e.preventDefault(); removeLink(selLink)"), noPanOnLine: src.includes("e.target.closest('.rc-links g')"),
                 saves: src.includes('JSON.stringify({ v: 1, blocks, links, next: counter })'), dropsOnRemove: src.includes('links = LinkOps.dropFor(links, id)'), screenSpace: src.includes('const centreScreen = b => toScreen(cam') };
     console.log(JSON.stringify(out));
     """
@@ -379,6 +379,37 @@ chk("background-image:none" in lk and ".rc-block--text, .rc-block--quote, .rc-bl
 chk(".rc-block:hover, .rc-block.sel, .rc-block.live{ filter:none !important; opacity:1 !important; }" in lk, "pointing at or selecting a soft far thing brings it into focus")
 chk('content:"[ "' in lk and "prefers-reduced-motion" in lk and ".rc-view.ringed{ cursor:none; }" in lk, "bracketed controls, a hidden system cursor over the canvas, and reduced motion respected")
 chk(not re.search(r"#[0-9a-fA-F]{3,8}\b", lk), "the look uses theme tokens only, no hex")
+
+# ── my additions never redefine a class the wall already had (this has bitten twice: .chip/.tag on the page, then .rc-list/.rc-row/.rc-rec) ──
+ORIGINAL_CLASSES = ["rc-list", "rc-list__row", "rc-row", "rc-rec", "rc-rec__a", "rc-rec__acts", "rc-rec__cover", "rc-rec__meta", "rc-rec__t", "rc-pl", "rc-pl__row", "rc-pl__rows",
+                    "rc-text", "rc-img", "rc-link", "rc-sheet", "rc-tools", "rc-body", "rc-cap", "rc-rz", "rc-block", "rc-stage", "rc-empty", "rc-add", "rc-addwrap", "rc-addmenu", "rc-status", "rc-quote", "rc-picked", "rc-lbl", "rc-hint", "rc-btn", "rc-tabs"]
+marker = "/* a web kept from Connections"
+orig_part, mine = css[:css.index(marker)], css[css.index(marker):]
+redefined = []
+for name in ORIGINAL_CLASSES:
+    pat = r"(?:^|[,{}\s])\." + re.escape(name) + r"(?![a-zA-Z0-9_-])"
+    in_orig = re.search(pat, orig_part, re.M) is not None
+    # only a rule that STARTS with the class (a selector of its own), not a compound like ".rc-block--node .rc-body", counts as redefining it
+    own = [m for m in re.finditer(r"(?m)^\.(" + re.escape(name) + r")(?![a-zA-Z0-9_-])[^{]*\{", mine) if "," not in m.group(0).split("{")[0] or True]
+    own = [m for m in own if re.match(r"^\." + re.escape(name) + r"(?![a-zA-Z0-9_-])\s*\{", m.group(0))]
+    if in_orig and own:
+        redefined.append(name)
+INTENDED = {"rc-block", "rc-add", "rc-empty"}            # restyled on purpose: the block's focus transition, the bracketed + button, the empty wall's intro
+redefined = [r for r in redefined if r not in INTENDED]
+chk(not redefined, f"nothing I added redefines a class the wall already used on its own (apart from the three restyled on purpose): {redefined or 'none'}")
+mine_classes = set(re.findall(r"\.(rc-[a-z0-9_-]+)", mine))
+chk(not (mine_classes & {"rc-list", "rc-list__row", "rc-row", "rc-rec"}), "…and the old names (rc-list, rc-row, rc-rec) are not used by the new parts at all")
+
+# ── the typed intro for an empty wall ──
+_rc = open(CANVAS, encoding="utf-8").read()
+chk("const INTRO = ['Everything you save is connected to something.'" in _rc and "or a picture.'" in _rc, "an empty wall says one quiet thing, in plain English")
+chk("if (reduced || introSeen()) { introFinish(); return; }" in _rc, "it is shown whole, at once, with reduced motion and after the first time in a visit")
+chk("sessionStorage.setItem('rc_intro', '1')" in _rc and "function stopIntro()" in _rc and "else if (blocks.length) stopIntro();" in _rc, "it is remembered for the visit, and it stops the moment there is a block")
+chk("e.stopPropagation();" in _rc and "data-intro=\"music\"" in _rc and "data-intro=\"block\"" in _rc and "data-intro=\"skip\"" in _rc, "Skip, Add music and Add a block work (and the + menu is not closed by the click that opened it)")
+chk("INTRO[introLine]" in _rc and "textContent = text.slice(0, introChar)" in _rc, "the text is typed with textContent, never as markup")
+_css = open(os.path.join(PROJ, "static", "css", "room_canvas.css"), encoding="utf-8").read()
+_ic = _css[_css.index("/* ── the typed intro"):]
+chk("@keyframes rc-blink" in _ic and "prefers-reduced-motion" in _ic and not re.search(r"#[0-9a-fA-F]{3,8}\b", _ic), "the cursor blinks (not with reduced motion), and the intro uses theme tokens only")
 
 shutil.rmtree(TMP, ignore_errors=True)
 print(f"\n{'ALL PASSED' if not fails else str(len(fails)) + ' FAILED'}")
