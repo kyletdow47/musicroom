@@ -3396,6 +3396,32 @@ def api_spotify_control():
     return jsonify({"ok": bool(ok)}), (200 if ok else 400)
 
 
+# A search that worked is remembered, so asking again costs Spotify nothing, and if Spotify then has one of its
+# brief hiccups the last good answer is shown instead of an error. (Search results move slowly; ten minutes
+# counts as fresh, and a day-old answer is still better than none.)
+_SPOTIFY_SEARCH_CACHE = {}
+_SEARCH_FRESH_S, _SEARCH_KEEP_S, _SEARCH_MAX = 600, 86400, 300
+
+
+def _spotify_search_cached(spo, q, now=None):
+    """-> (status, found, stale). `stale` is True when Spotify did not answer and an older good answer was used."""
+    now = _time.time() if now is None else now
+    key = " ".join(q.lower().split())
+    hit = _SPOTIFY_SEARCH_CACHE.get(key)
+    if hit and now - hit[0] < _SEARCH_FRESH_S:
+        return 200, hit[1], False
+    status, found = spo.search(q)
+    if status == 200:
+        _SPOTIFY_SEARCH_CACHE[key] = (now, found)
+        if len(_SPOTIFY_SEARCH_CACHE) > _SEARCH_MAX:                       # drop the oldest few
+            for k in sorted(_SPOTIFY_SEARCH_CACHE, key=lambda k: _SPOTIFY_SEARCH_CACHE[k][0])[:_SEARCH_MAX // 5]:
+                _SPOTIFY_SEARCH_CACHE.pop(k, None)
+        return 200, found, False
+    if status != 401 and hit and now - hit[0] < _SEARCH_KEEP_S:
+        return 200, hit[1], True
+    return status, found, False
+
+
 @app.route("/api/spotify/search")
 def api_spotify_search():
     """What the listener typed, found on Spotify — tracks, albums, artists —
@@ -3407,7 +3433,7 @@ def api_spotify_search():
     spo = _get_spotify()
     if len(q) < 2 or not spo.is_connected():
         return jsonify({"results": [], "connected": spo.is_connected()})
-    status, found = spo.search(q)
+    status, found, stale = _spotify_search_cached(spo, q)
     if status != 200:
         return jsonify({"results": [], "connected": status != 401, "error": "Spotify didn't answer"}), 200
     from spotify import tidy_search
@@ -3431,7 +3457,7 @@ def api_spotify_search():
         else:
             row.update(subtitle="Artist", image=f.get("image") or "", thumb=f.get("thumb") or "")
         out.append(row)
-    return jsonify({"results": out, "connected": True})
+    return jsonify(dict({"results": out, "connected": True}, **({"stale": True} if stale else {})))
 
 
 @app.route("/api/spotify/saved-tracks")

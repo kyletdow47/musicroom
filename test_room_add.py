@@ -79,6 +79,26 @@ function fakeApp(opts) {
   app = fakeApp({ streams: { error: 'not found' } });
   out.addFails = await R.create(app.f).add({ items: [{ url: 'u1' }], grupaId: 5 });
   out.addAlready = await R.create(fakeApp({ streams: { ok: true, added: 0, already: 3 } }).f).add({ items: [{ url: 'u1' }], grupaId: 5 });
+  // patience: Spotify "didn't answer" a few times, then does
+  const slow = async (script, fnName, args) => {
+    const waits = [], said = [];
+    const f = async (url, o) => { const r = script.shift(); return { ok: r.ok !== false, json: async () => r.body }; };
+    const api = R.create(f, { sleep: async ms => { waits.push(ms); }, onWait: t => said.push(t) });
+    const res = await api[fnName].apply(api, args);
+    return { res, waits, said, left: script.length };
+  };
+  const fail = { body: { results: [], connected: true, error: "Spotify didn't answer" } };
+  const good = { body: { connected: true, results: [album] } };
+  out.slow2 = await slow([fail, fail, good], 'match', ['ETNOBOTANIKA', 'Kosmobotanika']);
+  out.slowForever = await slow([fail, fail, fail, fail, fail, fail, fail], 'match', ['a', 'b']);
+  out.noRetryNotConnected = await slow([{ body: { connected: false, results: [] } }, good], 'match', ['a', 'b']);
+  out.noRetryNotFound = await slow([{ body: { connected: true, results: [] } }, good], 'match', ['a', 'b']);
+  out.firstTime = await slow([good], 'match', ['ETNOBOTANIKA', 'Kosmobotanika']);
+  const hiccup = { ok: false, body: { error: 'Service Unavailable', status: 503 } };
+  const songsOk = { body: { items: [{ url: 'https://open.spotify.com/track/1', title: 'One' }], total: 1 } };
+  out.slowSongs = await slow([hiccup, hiccup, songsOk], 'songs', [album]);
+  out.slowRefused = await slow([{ ok: false, body: { error: 'Forbidden', status: 403 } }, songsOk], 'songs', [album]);
+  out.slowDown = await slow([hiccup, hiccup, hiccup, hiccup, hiccup, hiccup], 'songs', [album]);
   console.log(JSON.stringify(out));
 })();
 '''
@@ -111,6 +131,19 @@ chk(o["addNew"]["made"]["name"] == "My New One" and o["addNew"]["made"]["descrip
 chk(o["addExisting"]["calls"] == [["/api/grupa/5/streams", "POST"]], "add: into an existing grúpa makes no new one")
 chk("error" in o["addFails"], "add: a refusal is reported, not swallowed")
 chk(o["addAlready"] == {"grupaId": 5, "added": 0, "already": 3}, "add: songs already there are counted, not doubled")
+
+s2 = o["slow2"]
+chk(s2["res"]["album"]["title"] == "KOSMOBOTANIKA" and s2["waits"] == [1200, 2500] and s2["left"] == 0, f"match: Spotify doesn't answer twice, then does: the album is found and the person never sees an error ({s2['waits']})")
+chk(s2["said"].count("Spotify is slow. Still trying…") == 2 and s2["said"][-1] == "", "…the page said it was still trying, and cleared the message after")
+sf = o["slowForever"]
+chk("didn't answer" in sf["res"]["error"] and sf["waits"] == [1200, 2500, 4500, 7000], f"match: if Spotify stays down it stops after about 15 seconds of trying, with the plain error ({sf['waits']})")
+chk(o["noRetryNotConnected"]["waits"] == [] and o["noRetryNotConnected"]["res"].get("notConnected") is True, "match: 'not connected' is final, not retried")
+chk(o["noRetryNotFound"]["waits"] == [] and "not found" in o["noRetryNotFound"]["res"]["error"], "match: 'not found on Spotify' is final, not retried (Spotify answered)")
+chk(o["firstTime"]["waits"] == [] and o["firstTime"]["said"] == [""], "match: when it works first time there is no waiting and no message")
+sg = o["slowSongs"]
+chk(sg["res"]["whole"] is False and sg["res"]["items"][0]["title"] == "One" and sg["waits"] == [1200, 2500], "songs: a hiccup or two, then the album's own songs, not the whole-album fallback")
+chk(o["slowRefused"]["waits"] == [] and o["slowRefused"]["res"]["whole"] is True and o["slowRefused"]["res"]["why"] == "Forbidden", "songs: a 403 is final and goes straight to the whole-album fallback")
+chk(o["slowDown"]["res"]["whole"] is True and len(o["slowDown"]["waits"]) == 4, "songs: if Spotify stays down, after trying it falls back to the whole album rather than failing")
 
 print("")
 print("  ALL PASS" if not fails else f"  {len(fails)} FAILURE(S): {fails}")

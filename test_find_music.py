@@ -177,10 +177,13 @@ for code in (429, 403, 404, 401):
     naps.clear(); spo = Flaky([{"error": "no", "status": code}, GOODP]); d = f.get_retry(spo, "/x", {}, sleep=naps.append)
     chk(d.get("status") == code and spo.n == 1 and naps == [], f"get_retry: {code} is returned as it is, never retried")
 chk(f.get_retry(Flaky(["junk"]), "/x", {}, sleep=naps.append) == "junk", "get_retry: an odd answer is not mistaken for an error")
+f._ALBUM_CACHE.clear()          # (an earlier test already fetched this album; the route would answer from memory)
 sp3 = Flaky([{"error": "Service Unavailable", "status": 503}, GOODP]); f.time.sleep = lambda s: None
 rr = mini(sp3).get("/api/find/album-tracks?id=ABCDEFGHIJ1234").get_json()
 chk(rr.get("total") == 1 and sp3.n == 2, "the album-tracks route survives a 503 on its first try")
 hp = open(os.path.join(PROJ, "templates", "find.html"), encoding="utf-8").read()
+chk("async function patient(ask, say)" in hp and "d.status !== 401 && d.status !== 403" in hp and "[1200, 2500, 4500]" in hp, "page: keeps trying, out loud, on a Spotify hiccup, but never on a refusal")
+chk(hp.count("await patient(") >= 3, "page: the album search, the album's songs and every mix lookup all go through it")
 chk("t.state = 'failed'" in hp and "Spotify didn\\'t answer" in hp and "did not answer" in hp, "mix: a Spotify failure is shown as 'didn't answer', not as 'not found', and can be retried")
 chk("t.state === 'done') continue" in hp, "mix: songs already answered are not asked again on a retry")
 chk("/api/find/album-tracks" in hp and "albumSongs" in hp, "page asks for the songs and lands them")

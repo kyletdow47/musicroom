@@ -246,7 +246,9 @@
     edgeEls.forEach(({ ln, e }) => { const on = !!key && (e.a.key === key || e.b.key === key); ln.classList.toggle('on', on); ln.classList.toggle('dim', !!key && !on); });
     info(key ? g.nodes.get(key) : null);
   }
-  const room = RoomAdd.create(), adds = new Map(), previews = new Map();
+  let waiting = '';                                     // what to say while Spotify is slow (RoomAdd keeps trying; this only tells the person)
+  const room = RoomAdd.create(null, { onWait: t => { waiting = t; const n = g.nodes.get(sel); if (n && addOf(n).state === 'finding') renderAdd(n); } }),
+        adds = new Map(), previews = new Map();
   const clock = t => { t = Math.round(t || 0); return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'); };
   const addOf = n => { if (!adds.has(n.key)) adds.set(n.key, { state: 'idle' }); return adds.get(n.key); };
 
@@ -324,7 +326,7 @@
     const a = addOf(n);
     const link = '<a href="https://open.spotify.com/search/' + encodeURIComponent((n.sub + ' ' + n.name).trim()) + '/albums" target="_blank" rel="noopener">search Spotify</a>';
     if (a.state === 'idle') box.innerHTML = '<div class="row"><button class="go" data-a="addstart">Add to My Room</button></div>';
-    else if (a.state === 'finding') box.innerHTML = '<p>Finding it on Spotify…</p>';
+    else if (a.state === 'finding') box.innerHTML = '<p>' + esc(waiting || 'Finding it on Spotify…') + '</p>';
     else if (a.state === 'error') box.innerHTML = '<p class="err">' + esc(a.msg) + '</p><p>' + (a.notConnected ? '<a href="/spotify">Connect Spotify</a>' : link) + '</p><div class="row"><button data-a="addstart">Try again</button></div>';
     else if (a.state === 'confirm') {
       const m = a.match;

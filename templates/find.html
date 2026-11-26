@@ -205,6 +205,18 @@
   }
   $('fd-kind').onclick = e => { const b = e.target.closest('button'); if (b) choose(b.dataset.k); };
 
+  // Spotify has brief hiccups. The server already retries and remembers good answers; on top of that this keeps
+  // trying, out loud, for about 8 seconds before a failure is shown. (A refusal, 401 or 403, is not a hiccup.)
+  const hiccup = d => !!(d && d.error && d.connected !== false && d.status !== 401 && d.status !== 403);
+  async function patient(ask, say){
+    let d = await ask();
+    for (const w of [1200, 2500, 4500]) {
+      if (!hiccup(d)) break;
+      say('Spotify is slow. Still trying…'); await new Promise(r => setTimeout(r, w)); d = await ask();
+    }
+    return d;
+  }
+
   // ── Spotify search (the app's own endpoint) ────────────────────────
   async function spotify(q){
     const d = await j('/api/spotify/search?q=' + encodeURIComponent(q));
@@ -218,7 +230,7 @@
     const box = $('fd-ahits'); const q = ($('fd-aa').value + ' ' + $('fd-ab').value).trim();
     if (q.length < 2) return;
     box.innerHTML = '<p class="fd__msg">Searching Spotify…</p>';
-    const d = await spotify(q);
+    const d = await patient(() => spotify(q), t => { box.innerHTML = '<p class="fd__msg">' + esc(t) + '</p>'; });
     if (!spotifyOn) return notConnected(box);
     if (d.error) { box.innerHTML = '<p class="fd__msg err">' + esc(d.error) + '</p>'; return; }
     const albums = (d.results || []).filter(r => r.stream_type === 'album');
@@ -247,7 +259,7 @@
     $('fd-conn').hidden = false;
     const id = (String(a.url).match(/album\/([A-Za-z0-9]+)/) || [])[1];
     box.innerHTML = '<p class="fd__msg">Reading the songs…</p>';
-    const d = id ? await j('/api/find/album-tracks?id=' + id + '&image=' + encodeURIComponent(a.image || a.thumb || '')) : { error: 'No album id.' };
+    const d = id ? await patient(() => j('/api/find/album-tracks?id=' + id + '&image=' + encodeURIComponent(a.image || a.thumb || '')), t => { box.innerHTML = '<p class="fd__msg">' + esc(t) + '</p>'; }) : { error: 'No album id.', status: 403 };
     if (albumPick !== a) return;                       // they picked another while this was loading
     if (d.error || !(d.items || []).length) {
       box.innerHTML = '<p class="fd__msg err">Spotify would not list the songs on this album' + (d.error ? ' (' + esc(d.error) + ')' : '') +
@@ -296,7 +308,7 @@
     for (const t of tracks) {
       if (t.state === 'done') continue;                              // ones already answered are not asked again
       t.state = 'busy'; drawTracks();
-      const d = await spotify((t.artist + ' ' + t.title).trim());
+      const d = await patient(() => spotify((t.artist + ' ' + t.title).trim()), m => say($('fd-msg'), m));
       if (!spotifyOn) { $('fd-mixfind').disabled = false; return notConnected($('fd-tracks')); }
       if (d.error) { t.hit = null; t.state = 'failed'; }           // Spotify did not answer: that is not the same as "not on Spotify"
       else { t.hit = (d.results || []).find(r => r.stream_type === 'track') || null; t.state = 'done'; }

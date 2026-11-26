@@ -5,7 +5,8 @@
  * /api/find/album-tracks, /api/grupa), so one Spotify connection and one rate limiter serve everything.
  *
  *   RoomAdd.pick(results, artist, album)   which Spotify album is the right one (pure, tested)
- *   RoomAdd.create(fetch)                  the steps below, with `fetch` replaceable for tests
+ *   RoomAdd.create(fetch, opts)            the steps below. `fetch` and `opts.sleep` are replaceable for tests;
+ *                                          `opts.onWait(text)` is told when it is trying again, so the page can say so
  *       .match(artist, album)              -> { album } | { error, notConnected }
  *       .songs(album)                      -> { items, whole }   whole = true when only the album itself could be added
  *       .grupas(firstUrl)                  -> [{ id, name, has }]
@@ -32,8 +33,26 @@
     return byArtist[0] || null;
   }
 
-  function create(f) {
+  // Spotify has brief hiccups. The server already retries once or twice and remembers good answers; on top of that
+  // the page keeps trying, patiently and out loud, before it ever shows a failure. About 20 seconds in all.
+  var PATIENCE = [1200, 2500, 4500, 7000];
+
+  function create(f, opts) {
     f = f || function (u, o) { return root.fetch(u, o); };
+    opts = opts || {};
+    var sleep = opts.sleep || function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+    var say = opts.onWait || function () {};
+    // run `step` until it stops reporting a Spotify failure (r.retry) or the patience runs out
+    var patiently = function (step) {
+      var go = function (i) {
+        return step().then(function (r) {
+          if (!r || !r.retry || i >= PATIENCE.length) return r;
+          say('Spotify is slow. Still trying…');
+          return sleep(PATIENCE[i]).then(function () { return go(i + 1); });
+        });
+      };
+      return go(0).then(function (r) { say(''); return r; });
+    };
     var j = function (url, opt) {
       return f(url, opt).then(function (r) {
         return r.json().catch(function () { return {}; }).then(function (d) { if (!r.ok && !d.error) d.error = 'Something went wrong'; d._ok = r.ok; return d; });
@@ -44,18 +63,26 @@
 
     return {
       match: function (artist, album) {
-        return j('/api/spotify/search?q=' + enc((artist + ' ' + album).trim())).then(function (d) {
-          if (d.connected === false) return { notConnected: true, error: 'Spotify is not connected.' };
-          if (d.error) return { error: d.error };
-          var m = pick(d.results, artist, album);
-          return m ? { album: m } : { error: 'That album was not found on Spotify.' };
+        return patiently(function () {
+          return j('/api/spotify/search?q=' + enc((artist + ' ' + album).trim())).then(function (d) {
+            if (d.connected === false) return { notConnected: true, error: 'Spotify is not connected.' };
+            if (d.error) return { error: d.error, retry: true };                   // "didn't answer": worth another go
+            var m = pick(d.results, artist, album);
+            return m ? { album: m } : { error: 'That album was not found on Spotify.' };
+          });
         });
       },
       songs: function (album) {
         var id = (String(album.url).match(/album\/([A-Za-z0-9]+)/) || [])[1];
         var whole = [{ url: album.url, title: album.title, subtitle: album.subtitle, image: album.image || album.thumb || '', by_ids: album.by_ids, duration_sec: album.duration_sec }];
         if (!id) return Promise.resolve({ items: whole, whole: true });
-        return j('/api/find/album-tracks?id=' + id + '&image=' + enc(album.image || album.thumb || '')).then(function (d) {
+        // a refusal (401/403) is final; anything else is a hiccup and is tried again before settling for the whole album
+        return patiently(function () {
+          return j('/api/find/album-tracks?id=' + id + '&image=' + enc(album.image || album.thumb || '')).then(function (d) {
+            if (d.error && d.status !== 401 && d.status !== 403) return { error: d.error, status: d.status, retry: true };
+            return d;
+          });
+        }).then(function (d) {
           return (d.error || !(d.items || []).length) ? { items: whole, whole: true, why: d.error || '' } : { items: d.items, whole: false };
         });
       },

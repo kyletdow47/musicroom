@@ -290,6 +290,7 @@ chk("/static/js/conn_start.js" in html and "cn-now" in html and "cn-liked" in ht
 chk("/api/spotify/saved-tracks" in html and "/api/seinnteoir/state" in html, "page reads the liked songs and the player's state from the app's own endpoints")
 chk("history.replaceState" in html and "p.get('title')" in html, "a song-started web has a link that reloads to the same web")
 chk("cn-song mine" not in html and ".cn-song.mine" in html, "the song you started from is marked in the song list")
+chk("RoomAdd.create(null, { onWait" in html and "Finding it on Spotify…" in html, "Connections tells the person while Spotify is slow (RoomAdd keeps trying)")
 chk("tryN < 3" in html and "r.status === 401" in html, "liked songs: tried up to three times on a hiccup, but a sign-in problem is not retried")
 chk("cn-keep" in html and "/api/connections/keep" in html and "/room?wall=1" in html, "page can keep a web and lead to the wall")
 chk("edges: g.edges.filter" in html and "slice(0, 119)" in html, "a very large web is trimmed to the nearest 119 + the start before it is sent")

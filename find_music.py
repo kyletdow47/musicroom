@@ -281,6 +281,10 @@ def get_retry(spo, path, params, pauses=(0.5, 1.5), sleep=time.sleep):
     return data
 
 
+_ALBUM_CACHE = {}                         # album id -> (time, rows): an album's songs do not change
+ALBUM_FRESH_S, ALBUM_KEEP_S = 3600, 7 * 86400
+
+
 def register(app, get_spotify=None):
     from flask import jsonify, render_template, request
 
@@ -310,13 +314,22 @@ def register(app, get_spotify=None):
         if spo is None or not spo.is_connected():
             return jsonify({"error": "Spotify is not connected."}), 401
         image = (request.args.get("image") or "")[:500]
+        now = time.time()
+        hit = _ALBUM_CACHE.get(aid)
+        if hit and now - hit[0] < ALBUM_FRESH_S:                               # asked recently: no need to ask Spotify again
+            return jsonify({"items": hit[1], "total": len(hit[1])})
         items, offset = [], 0
         while offset < 500:
             data = get_retry(spo, f"/albums/{aid}/tracks", {"limit": 50, "offset": offset})
             if "error" in data:
+                if hit and now - hit[0] < ALBUM_KEEP_S and data.get("status") not in (401, 403):
+                    return jsonify({"items": hit[1], "total": len(hit[1]), "stale": True})     # Spotify hiccup: the last good list will do
                 return jsonify({"error": data.get("error"), "status": data.get("status") or 502}), 200
             items += album_items(data, image)
             if not data.get("next"):
                 break
             offset += 50
+        _ALBUM_CACHE[aid] = (now, items)
+        if len(_ALBUM_CACHE) > 200:
+            _ALBUM_CACHE.pop(min(_ALBUM_CACHE, key=lambda k: _ALBUM_CACHE[k][0]), None)
         return jsonify({"items": items, "total": len(items)})
