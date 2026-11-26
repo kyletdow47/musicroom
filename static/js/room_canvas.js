@@ -168,6 +168,28 @@ window.MRRoomCanvas = (function () {
   }
   function playAll(items) { if (window.Seinnteoir) window.Seinnteoir.playAll(items); }
 
+  // ── lines between blocks ─────────────────────────────────────────────────
+  // The wall is a mind map: any two blocks can be joined by a line, yours ("mine", solid) or a suggestion that came
+  // with a grown web ("near", faint). A line has no direction. These mirror wall_links.py (which re-checks on save).
+  const linkKey = (a, b) => (a < b ? a + '|' + b : b + '|' + a);
+  const LinkOps = {
+    key: linkKey,
+    has: (links, a, b) => { const k = linkKey(a, b); return links.some(l => linkKey(l.a, l.b) === k); },
+    // -> { links, added, link }: joining a pair that is already joined adds nothing (a suggestion you join yourself becomes yours)
+    add(links, a, b, kind, label) {
+      if (!a || !b || a === b) return { links, added: false };
+      const k = linkKey(a, b), i = links.findIndex(l => linkKey(l.a, l.b) === k);
+      if (i >= 0) {
+        if (kind !== 'near' && links[i].kind !== 'mine') { const next = links.slice(); next[i] = Object.assign({}, links[i], { kind: 'mine' }); return { links: next, added: true, link: next[i] }; }
+        return { links, added: false, link: links[i] };
+      }
+      const link = { a, b, kind: kind === 'near' ? 'near' : 'mine', label: String(label || '').slice(0, 80) };
+      return { links: links.concat([link]), added: true, link };
+    },
+    dropFor: (links, id) => links.filter(l => l.a !== id && l.b !== id),
+    remove: (links, a, b) => { const k = linkKey(a, b); return links.filter(l => linkKey(l.a, l.b) !== k); },
+  };
+
   // ── the camera ───────────────────────────────────────────────────────────
   // The wall is a world with a camera: pan, pinch-zoom, and depth. A block keeps its x, y, w, h (so a wall saved
   // before this loads exactly as it was) and gains a layer `d` from -3 (far) to +3 (near). Farther blocks draw
@@ -230,7 +252,8 @@ window.MRRoomCanvas = (function () {
 
     host.classList.add('rc');
     host.innerHTML = `
-      <div class="rc-view" id="rc-view"><div class="rc-stage" id="rc-stage"></div></div>
+      <div class="rc-view" id="rc-view"><svg class="rc-links" id="rc-links"></svg><div class="rc-stage" id="rc-stage"></div></div>
+      <div class="rc-linkbox" id="rc-linkbox"></div>
       <div class="rc-hud" id="rc-hud">
         <button data-hud="fit" title="Fit everything on screen">Fit</button><button data-hud="in" title="Zoom in">+</button><button data-hud="out" title="Zoom out">−</button>
         <button data-hud="depth" id="rc-depth" title="Depth: blocks sit on layers, and the view looks around as you move">3D</button>
@@ -263,6 +286,7 @@ window.MRRoomCanvas = (function () {
       view.style.backgroundSize = g + 'px ' + g + 'px';
       view.style.backgroundPosition = (cam.x % g) + 'px ' + (cam.y % g) + 'px';
       const d = host.querySelector('#rc-depth'); if (d) d.classList.toggle('on', cam.depth);
+      drawLinks();
       clearTimeout(camSaveT); camSaveT = setTimeout(() => { try { localStorage.setItem(camKey, JSON.stringify({ x: cam.x, y: cam.y, k: cam.k })); } catch (_) {} }, 400);
     }
     function centreOrigin() { const v = viewSize(); cam.ox = v.W / 2; cam.oy = v.H / 2; lookTo = null; }
@@ -277,18 +301,66 @@ window.MRRoomCanvas = (function () {
     const worldAtPointer = (e, z) => { const v = viewSize(); return toWorld(cam, e.clientX - v.l, e.clientY - v.t, z || 0); };
     const viewCentreWorld = () => { const v = viewSize(); return toWorld(cam, v.W / 2, v.H / 2, 0); };
 
+    // ── lines: state, drawing (screen space, so they meet each block on its own layer), editing ──
+    let links = [], selLink = null, linking = null, linkFrom = null;
+    const svg = host.querySelector('#rc-links'), linkBox = host.querySelector('#rc-linkbox'), linkEls = new Map();
+    const NS = 'http://www.w3.org/2000/svg', svgEl = t => document.createElementNS(NS, t);
+    const centreScreen = b => toScreen(cam, b.x + b.w / 2, b.y + b.h / 2, zOf(b, rankOf[b.id]));
+    function drawLinks() {
+      const live = new Set();
+      links.forEach(l => {
+        const a = blocks.find(x => x.id === l.a), b = blocks.find(x => x.id === l.b); if (!a || !b) return;
+        const k = linkKey(l.a, l.b); live.add(k);
+        let g = linkEls.get(k);
+        if (!g) { g = { root: svgEl('g'), line: svgEl('line'), hit: svgEl('line'), text: svgEl('text') }; g.root.dataset.k = k; g.hit.setAttribute('class', 'hit'); g.root.append(g.line, g.hit, g.text); svg.appendChild(g.root); linkEls.set(k, g); }
+        const p = centreScreen(a), q = centreScreen(b);
+        [g.line, g.hit].forEach(n => { n.setAttribute('x1', p.x.toFixed(1)); n.setAttribute('y1', p.y.toFixed(1)); n.setAttribute('x2', q.x.toFixed(1)); n.setAttribute('y2', q.y.toFixed(1)); });
+        g.line.setAttribute('class', 'ln ' + (l.kind === 'near' ? 'near' : 'mine') + (selLink === k ? ' sel' : ''));
+        g.text.setAttribute('x', ((p.x + q.x) / 2).toFixed(1)); g.text.setAttribute('y', ((p.y + q.y) / 2 - 5).toFixed(1)); g.text.setAttribute('text-anchor', 'middle');
+        g.text.textContent = l.label || '';
+      });
+      linkEls.forEach((g, k) => { if (!live.has(k)) { g.root.remove(); linkEls.delete(k); } });
+      let t = svg.querySelector('.tmp');                                   // the line being pulled out of a dot
+      if (linking) {
+        const a = blocks.find(x => x.id === linking.from), v = viewSize();
+        if (a) { if (!t) { t = svgEl('line'); t.setAttribute('class', 'ln mine tmp'); svg.appendChild(t); } const p = centreScreen(a);
+          t.setAttribute('x1', p.x); t.setAttribute('y1', p.y); t.setAttribute('x2', linking.x - v.l); t.setAttribute('y2', linking.y - v.t); }
+      } else if (t) t.remove();
+      if (selLink) placeLinkBox();
+    }
+    function placeLinkBox() {
+      const l = links.find(x => linkKey(x.a, x.b) === selLink), a = l && blocks.find(x => x.id === l.a), b = l && blocks.find(x => x.id === l.b);
+      if (!l || !a || !b) { linkBox.classList.remove('on'); return; }
+      const p = centreScreen(a), q = centreScreen(b), v = viewSize();
+      linkBox.style.left = Math.min(Math.max(8, v.l + (p.x + q.x) / 2 - 110), innerWidth - 240) + 'px'; linkBox.style.top = Math.min(Math.max(70, v.t + (p.y + q.y) / 2 + 10), innerHeight - 90) + 'px';
+    }
+    function selectLink(k) {
+      selLink = k; if (k) { sel = null; stage.querySelectorAll('.rc-block').forEach(el => el.classList.remove('sel')); }
+      const l = k && links.find(x => linkKey(x.a, x.b) === k);
+      if (!l) { linkBox.classList.remove('on'); linkBox.innerHTML = ''; drawLinks(); return; }
+      linkBox.innerHTML = `<input data-l="label" maxlength="80" placeholder="a few words (optional)" value="${esc(l.label || '')}"><div class="rc-linkbox__r"><span>${l.kind === 'near' ? 'a suggestion' : 'your line'}</span><button data-l="remove">remove line</button></div>`;
+      linkBox.classList.add('on'); drawLinks();
+    }
+    function addLink(a, b, kind) {
+      const r = LinkOps.add(links, a, b, kind); if (!r.added) { if (r.link) selectLink(linkKey(r.link.a, r.link.b)); return; }
+      links = r.links; dirty(); selectLink(linkKey(a, b));
+    }
+    function removeLink(k) { const l = links.find(x => linkKey(x.a, x.b) === k); if (!l) return; links = LinkOps.remove(links, l.a, l.b); selLink = null; linkBox.classList.remove('on'); drawLinks(); dirty(); }
+    function cancelLinking() { linkFrom = null; linking = null; host.classList.remove('linking'); if (status.textContent.startsWith('now click')) status.textContent = ''; drawLinks(); }
+
     // ── persistence ──
     async function load() {
       try {
         const d = await (await fetch(`/api/room/canvas/${placeId}`)).json();
         blocks = Array.isArray(d.blocks) ? d.blocks : [];
-      } catch (_) { blocks = []; }
+        links = Array.isArray(d.links) ? d.links.filter(l => l && typeof l.a === 'string' && typeof l.b === 'string') : [];
+      } catch (_) { blocks = []; links = []; }
       loaded = true; renderAll(); if (!camSet) restoreCam();
     }
     function dirty() { status.textContent = '…'; clearTimeout(saveT); saveT = setTimeout(save, 600); }
     async function save() {
       try {
-        const r = await fetch(`/api/room/canvas/${placeId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ v: 1, blocks }) });
+        const r = await fetch(`/api/room/canvas/${placeId}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ v: 1, blocks, links }) });
         if (!r.ok) throw new Error('save failed');
         status.textContent = 'saved'; setTimeout(() => { if (status.textContent === 'saved') status.textContent = ''; }, 1400);
       } catch (_) { status.textContent = 'not saved'; }
@@ -307,7 +379,7 @@ window.MRRoomCanvas = (function () {
     }
     function removeBlock(id) {
       const i = blocks.findIndex(b => b.id === id); if (i < 0) return;
-      blocks.splice(i, 1); if (sel === id) sel = null; closeSheet(); renderAll(); dirty();
+      blocks.splice(i, 1); links = LinkOps.dropFor(links, id); if (sel === id) sel = null; closeSheet(); renderAll(); dirty();
     }
     function bump(id, dir) {
       const zs = blocks.slice().sort((a, b) => a.z - b.z);
@@ -327,7 +399,7 @@ window.MRRoomCanvas = (function () {
       blocks.forEach(b => { keep.add(b.id); let el = stage.querySelector(`[data-id="${b.id}"]`); if (!el) { el = makeEl(b); stage.appendChild(el); } place(b, el); if (el.dataset.sig !== sig(b)) { el.dataset.sig = sig(b); fillBody(b, el); } });
       stage.querySelectorAll('.rc-block').forEach(el => { if (!keep.has(el.dataset.id)) el.remove(); });
       empty.style.display = blocks.length ? 'none' : '';
-      select(sel);
+      select(sel); drawLinks();
     }
     const sig = b => b.type + '|' + JSON.stringify(b.data);
     function place(b, el, lift) {
@@ -345,11 +417,12 @@ window.MRRoomCanvas = (function () {
           <span class="rc-tools__type">${esc(TYPES[b.type].label)}</span>
           ${b.type !== 'text' && b.type !== 'web' ? '<button data-act="fill" title="Fill this block">fill</button>' : ''}
           <button data-act="down" title="Send back">↓</button><button data-act="up" title="Bring forward">↑</button>
-          <button data-act="far" title="Push it farther away: smaller, and it moves less">far</button><button data-act="near" title="Pull it nearer: larger, and it moves more">near</button>
+          <button data-act="link" title="Join this to another block with a line">link</button><button data-act="far" title="Push it farther away: smaller, and it moves less">far</button><button data-act="near" title="Pull it nearer: larger, and it moves more">near</button>
           <button data-act="del" title="Remove this block">✕</button>
         </div>
         <div class="rc-body"></div>
         ${b.type !== 'text' ? '<div class="rc-cap" contenteditable="true" spellcheck="false" data-k="caption" placeholder="a caption"></div>' : ''}
+        <div class="rc-dot" data-act="dot" title="Drag this to another block to join them with a line"></div>
         <div class="rc-rz rc-rz--e"></div><div class="rc-rz rc-rz--s"></div><div class="rc-rz rc-rz--se"></div>`;
       return el;
     }
@@ -560,11 +633,13 @@ window.MRRoomCanvas = (function () {
       const el = e.target.closest('.rc-block');
       if (!el) return;
       const b = byId(el.dataset.id); if (!b) return;
+      if (linkFrom) { const from = linkFrom; cancelLinking(); if (from !== b.id) addLink(from, b.id); else select(b.id); return; }
       select(b.id);
       const act = e.target.closest('[data-act]'); if (!act) return;
       const a = act.dataset.act;
       if (a === 'del') { if (confirm('Remove this block?')) removeBlock(b.id); }
       else if (a === 'up') bump(b.id, +1);
+      else if (a === 'link') { linkFrom = b.id; host.classList.add('linking'); status.textContent = 'now click the block to join it to  ·  esc to cancel'; }
       else if (a === 'down') bump(b.id, -1);
       else if (a === 'far' || a === 'near') { b.d = clamp(depthOf(b) + (a === 'near' ? 1 : -1), -DEPTH_MAX, DEPTH_MAX); renderAll(); dirty(); }
       else if (a === 'fill') openSheet(b.id);
@@ -644,7 +719,7 @@ window.MRRoomCanvas = (function () {
         fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
         if (fingers.size === 2) { const [a, b] = [...fingers.values()]; pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) }; drag = null; panning = null; view.classList.remove('pan'); return; }
       }
-      if (e.target.closest('.rc-block')) return;
+      if (e.target.closest('.rc-block') || e.target.closest('.rc-links g')) return;
       if (e.button !== 0 && e.button !== 1) return;
       lookTo = null;
       panning = { sx: e.clientX, sy: e.clientY, cx: cam.x, cy: cam.y, moved: false };
@@ -667,7 +742,7 @@ window.MRRoomCanvas = (function () {
     const endPan = e => {
       fingers.delete(e.pointerId); if (fingers.size < 2) pinch = null;
       if (!panning) return; const p = panning; panning = null; view.classList.remove('pan');
-      if (!p.moved) { select(null); closeSheet(); }
+      if (!p.moved) { cancelLinking(); select(null); selectLink(null); closeSheet(); }
     };
     view.addEventListener('pointerup', endPan); view.addEventListener('pointercancel', endPan);
 
@@ -687,6 +762,8 @@ window.MRRoomCanvas = (function () {
       if (e.button !== 0 || pinch) return;
       const el = e.target.closest('.rc-block'); if (!el) return;
       const b = byId(el.dataset.id); if (!b) return;
+      const dot = e.target.closest('.rc-dot');
+      if (dot) { lookTo = null; linking = { from: b.id, x: e.clientX, y: e.clientY }; dot.setPointerCapture(e.pointerId); e.preventDefault(); drawLinks(); return; }
       const rz = e.target.closest('.rc-rz');
       if (!rz && e.target.closest('[contenteditable], input, button, a, iframe, select, textarea, img[data-act], .rc-pl__rows')) return;
       lookTo = null; const z = zOf(b, rankOf[b.id]) + 40;
@@ -695,13 +772,14 @@ window.MRRoomCanvas = (function () {
       e.preventDefault();
     });
     stage.addEventListener('pointermove', e => {
+      if (linking) { linking.x = e.clientX; linking.y = e.clientY; drawLinks(); return; }
       if (!drag) return;
       const w = worldAtPointer(e, drag.z), dx = w.x - drag.w0.x, dy = w.y - drag.w0.y;
       if (!drag.moved && Math.hypot(dx * cam.k, dy * cam.k) < 4) return; drag.moved = true;
       const b = drag.b;
       if (drag.mode === 'move') { b.x = snap(drag.ox + dx); b.y = snap(drag.oy + dy); }
       else { if (drag.mode !== 's') b.w = Math.max(MIN_W, snap(drag.ow + dx)); if (drag.mode !== 'e') b.h = Math.max(MIN_H, snap(drag.oh + dy)); }
-      place(b, drag.el, true); if (sheetFor === b.id) positionSheet(b);
+      place(b, drag.el, true); drawLinks(); if (sheetFor === b.id) positionSheet(b);
     });
     const endDrag = e => {
       if (!drag) return;
@@ -710,10 +788,24 @@ window.MRRoomCanvas = (function () {
       renderAll(); if (moved) dirty(); select(b.id);
     };
     stage.addEventListener('pointerup', endDrag); stage.addEventListener('pointercancel', endDrag);
+    const endLinking = e => {
+      if (!linking) return;
+      const from = linking.from; linking = null;
+      const under = document.elementFromPoint(e.clientX, e.clientY), el = under && under.closest && under.closest('.rc-block');
+      drawLinks(); if (el && e.type === 'pointerup' && el.dataset.id !== from) addLink(from, el.dataset.id);
+    };
+    stage.addEventListener('pointerup', endLinking); stage.addEventListener('pointercancel', endLinking);
+
+    // a line: click it to word or remove it
+    svg.addEventListener('click', e => { const g = e.target.closest('g[data-k]'); if (g) selectLink(g.dataset.k); });
+    linkBox.addEventListener('input', e => { const l = links.find(x => linkKey(x.a, x.b) === selLink); if (l && e.target.matches('[data-l="label"]')) { l.label = e.target.value.slice(0, 80); drawLinks(); dirty(); } });
+    linkBox.addEventListener('click', e => { if (e.target.matches('[data-l="remove"]')) removeLink(selLink); });
+    linkBox.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); selectLink(null); } });
     addEventListener('keydown', e => {
       if (!host.classList.contains('on')) return;
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selLink && !e.target.matches('input, textarea, [contenteditable]')) { e.preventDefault(); removeLink(selLink); return; }
       if ((e.key === 'Delete' || e.key === 'Backspace') && sel && !e.target.matches('input, textarea, [contenteditable]')) { e.preventDefault(); if (confirm('Remove this block?')) removeBlock(sel); }
-      if (e.key === 'Escape' && !e.target.matches('input, textarea, [contenteditable]')) { closeSheet(); select(null); }
+      if (e.key === 'Escape' && !e.target.matches('input, textarea, [contenteditable]')) { cancelLinking(); closeSheet(); select(null); selectLink(null); }
       if (!e.target.matches('input, textarea, [contenteditable]') && !e.metaKey && !e.ctrlKey) {
         const v = viewSize();
         if (e.key === '0') fitNow(true);
@@ -724,9 +816,9 @@ window.MRRoomCanvas = (function () {
     addEventListener('resize', () => { const b = byId(sheetFor); if (b) positionSheet(b); if (camSet) { centreOrigin(); applyCam(); } });
 
     load();
-    return { reload: load, addBlock, get blocks() { return blocks; } };
+    return { reload: load, addBlock, get blocks() { return blocks; }, get links() { return links; }, addLink };
   }
 
-  return { mount, TYPES, embedFor, fmtClock, parseClock, startFromUrl, withStart, quoteHtml, webHtml,
+  return { mount, TYPES, embedFor, fmtClock, parseClock, startFromUrl, withStart, quoteHtml, webHtml, LinkOps,
            camera: { PERSP, DEPTH_STEP, DEPTH_MAX, K_MIN, K_MAX, clamp, depthOf, zOf, scaleAt, toScreen, toWorld, zoomAt, fitCam, wheelPx } };
 })();

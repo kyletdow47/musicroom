@@ -12762,6 +12762,7 @@ _ROOM_CANVAS_DIR = os.path.join(_DATA_STATIC, "room_canvas")
 
 def _room_canvas_load(pid):
     import json as _json
+    import wall_links as _wl
     raw = get_setting(f"room_canvas:{pid}", "")
     try:
         d = _json.loads(raw) if raw else {}
@@ -12772,6 +12773,7 @@ def _room_canvas_load(pid):
     d.setdefault("v", 1)
     if not isinstance(d.get("blocks"), list):
         d["blocks"] = []
+    d["links"] = _wl.clean_links(d.get("links"), d["blocks"])          # the lines between blocks (see wall_links.py)
     return d
 
 
@@ -12789,11 +12791,15 @@ def api_room_canvas_save(pid):
     if len(blocks) > 400:
         return jsonify({"error": "too many blocks"}), 400
     import json as _json
-    payload = _json.dumps({"v": 1, "blocks": blocks})
+    import wall_links as _wl
+    # Lines are kept when a caller that only knows about blocks (Explore's "save this moment", Keep) saves without
+    # mentioning them: the existing lines stay, minus any whose block is gone.
+    links = _wl.clean_links(d["links"] if "links" in d else _room_canvas_load(pid).get("links"), blocks)
+    payload = _json.dumps({"v": 1, "blocks": blocks, "links": links})
     if len(payload) > 2_000_000:
         return jsonify({"error": "too big"}), 413
     set_setting(f"room_canvas:{pid}", payload)
-    return jsonify({"ok": True, "n": len(blocks)})
+    return jsonify({"ok": True, "n": len(blocks), "links": len(links)})
 
 
 @app.route("/api/room/canvas/image", methods=["POST"])
@@ -16228,7 +16234,7 @@ try:
     import json as _wall_json
     _connections.register(app, wall={
         "load": lambda pid: _room_canvas_load(pid),
-        "save": lambda pid, blocks: set_setting(f"room_canvas:{pid}", _wall_json.dumps({"v": 1, "blocks": blocks})),
+        "save": lambda pid, blocks: set_setting(f"room_canvas:{pid}", _wall_json.dumps({"v": 1, "blocks": blocks, "links": __import__("wall_links").clean_links(_room_canvas_load(pid).get("links"), blocks)})),
         "well": lambda: (query_one("SELECT id FROM places WHERE is_well=1") or {}).get("id"),
     })
 except ImportError:

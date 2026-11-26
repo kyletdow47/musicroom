@@ -293,6 +293,48 @@ if node:
             "the + menu has ONE click handler (two used to run, and the right-click one moved the previous block to the click before the new one existed)")
         chk("snap(at.x - T.w / 2)" in open(CANVAS, encoding="utf-8").read(), "a right-click puts the new block's middle on the click")
 
+# ── lines between blocks (client side; wall_links.py checks the same rules on save) ──
+if node:
+    LINK_JS = r"""
+    const fs = require('fs'), vm = require('vm');
+    const win = {}; vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), { window: win, URL, console });
+    const L = win.MRRoomCanvas.LinkOps, out = {};
+    let r = L.add([], 'a', 'b'); out.addFirst = [r.added, r.links.length, r.link.kind, r.link.label];
+    out.addSelf = L.add([], 'a', 'a').added; out.addEmpty = [L.add([], '', 'b').added, L.add([], 'a', null).added];
+    r = L.add([{ a: 'a', b: 'b', kind: 'mine', label: '' }], 'b', 'a'); out.reversedSame = [r.added, r.links.length];
+    r = L.add([{ a: 'a', b: 'b', kind: 'near', label: '' }], 'b', 'a'); out.nearBecomesMine = [r.added, r.links.length, r.links[0].kind];
+    r = L.add([{ a: 'a', b: 'b', kind: 'near', label: '' }], 'a', 'b', 'near'); out.nearStaysNear = [r.added, r.links[0].kind];
+    r = L.add([], 'a', 'b', 'near', 'x'.repeat(200)); out.nearKind = [r.link.kind, r.link.label.length];
+    out.badKind = L.add([], 'a', 'b', 'evil').link.kind;
+    const ls = [{ a: 'a', b: 'b' }, { a: 'b', b: 'c' }, { a: 'c', b: 'd' }];
+    out.dropFor = L.dropFor(ls, 'b').map(l => l.a + l.b); out.dropNone = L.dropFor(ls, 'zzz').length;
+    out.remove = L.remove(ls, 'c', 'b').map(l => l.a + l.b); out.has = [L.has(ls, 'b', 'a'), L.has(ls, 'a', 'c')];
+    out.key = [L.key('a', 'b') === L.key('b', 'a'), L.key('a', 'b')];
+    out.pure = (() => { const before = JSON.stringify(ls); L.add(ls, 'x', 'y'); L.remove(ls, 'a', 'b'); L.dropFor(ls, 'a'); return JSON.stringify(ls) === before; })();
+    const src = fs.readFileSync(process.argv[1], 'utf8');
+    out.src = { dot: src.includes('class="rc-dot"'), linkBtn: src.includes('data-act="link"'), esc: src.includes("cancelLinking(); closeSheet(); select(null); selectLink(null);"),
+                del: src.includes("selLink && !e.target.matches('input, textarea, [contenteditable]')) { e.preventDefault(); removeLink(selLink)"), noPanOnLine: src.includes("e.target.closest('.rc-links g')"),
+                saves: src.includes('JSON.stringify({ v: 1, blocks, links })'), dropsOnRemove: src.includes('links = LinkOps.dropFor(links, id)'), screenSpace: src.includes('const centreScreen = b => toScreen(cam') };
+    console.log(JSON.stringify(out));
+    """
+    r = subprocess.run([node, "-e", LINK_JS, CANVAS], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        chk(False, "the line operations run under node: " + (r.stderr or "")[:400])
+    else:
+        o = json.loads(r.stdout)
+        chk(o["addFirst"] == [True, 1, "mine", ""], "joining two blocks makes one line, and it is the person's own")
+        chk(o["addSelf"] is False and o["addEmpty"] == [False, False], "a block is not joined to itself or to nothing")
+        chk(o["reversedSame"] == [False, 1] and o["key"] == [True, "a|b"], "a line has no direction: joining b to a when a is joined to b adds nothing")
+        chk(o["nearBecomesMine"] == [True, 1, "mine"] and o["nearStaysNear"] == [False, "near"], "a suggestion you join yourself becomes your own line; a repeated suggestion stays a suggestion")
+        chk(o["nearKind"] == ["near", 80] and o["badKind"] == "mine", "kinds are checked and words are cut to 80")
+        chk(o["dropFor"] == ["cd"] and o["dropNone"] == 3, f"removing a block removes only the lines that ended on it ({o['dropFor']})")
+        chk(o["remove"] == ["ab", "cd"] and o["has"] == [True, False], "a line can be removed from either end")
+        chk(o["pure"], "none of it changes the lists it is given")
+        sr = o["src"]
+        chk(sr["dot"] and sr["linkBtn"], "every block has the drag-dot and a Link button")
+        chk(sr["esc"] and sr["del"] and sr["noPanOnLine"], "Esc cancels, Delete removes a selected line, and a click on a line is not swallowed by panning")
+        chk(sr["saves"] and sr["dropsOnRemove"] and sr["screenSpace"], "lines are saved with the blocks, go with a deleted block, and are drawn in screen space so they meet blocks on every layer")
+
 shutil.rmtree(TMP, ignore_errors=True)
 print(f"\n{'ALL PASSED' if not fails else str(len(fails)) + ' FAILED'}")
 sys.exit(1 if fails else 0)

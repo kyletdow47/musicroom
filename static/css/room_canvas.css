@@ -187,3 +187,23 @@
 .rc-web__go{ pointer-events:auto; margin-left:auto; appearance:none; border:1px solid var(--border); background:var(--bg); color:var(--text); font:inherit; font-family:var(--f-mono); font-size:.64rem; letter-spacing:.1em; text-transform:uppercase; padding:5px 8px; cursor:pointer; border-radius:0; }
 .rc-web__go:hover{ border-color:var(--text); }
 .rc-web__empty{ padding:20px; font-family:var(--f-mono); font-size:.8rem; color:var(--muted); }
+
+/* lines between blocks: drawn in screen space under the blocks, so they meet each block on its own layer */
+.rc-links{ position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
+.rc-links .ln{ stroke:var(--text); stroke-width:1.5; fill:none; }
+.rc-links .ln.near{ stroke:var(--border); stroke-dasharray:3 5; stroke-width:1.2; }
+.rc-links .ln.sel{ stroke-width:3; }
+.rc-links .ln.tmp{ stroke-dasharray:6 4; }
+.rc-links .hit{ stroke:transparent; stroke-width:16; pointer-events:stroke; cursor:pointer; }
+.rc-links text{ font-family:var(--f-mono); font-size:10px; letter-spacing:.08em; text-transform:uppercase; fill:var(--text); paint-order:stroke; stroke:var(--bg); stroke-width:4px; pointer-events:none; }
+.rc.linking .rc-view, .rc.linking .rc-block{ cursor:crosshair; }
+.rc-dot{ display:none; position:absolute; right:-9px; top:50%; margin-top:-7px; width:14px; height:14px; box-sizing:border-box; border:1px solid var(--text); background:var(--bg); cursor:crosshair; z-index:4; }
+.rc-dot::after{ content:""; position:absolute; inset:3px; background:var(--text); }
+.rc-block:hover .rc-dot, .rc-block.sel .rc-dot{ display:block; }
+.rc-block.live .rc-dot{ display:none; }
+.rc-linkbox{ display:none; position:fixed; z-index:35; width:230px; padding:10px; box-sizing:border-box; background:var(--sheet, var(--surface)); color:var(--text); border:1px solid var(--text); border-radius:0; }
+.rc-linkbox.on{ display:block; }
+.rc-linkbox input{ width:100%; box-sizing:border-box; background:transparent; color:var(--text); border:1px solid var(--border); border-radius:0; padding:7px 8px; font-family:var(--f-mono); font-size:.72rem; margin:0 0 8px; }
+.rc-linkbox__r{ display:flex; justify-content:space-between; align-items:center; font-family:var(--f-mono); font-size:.6rem; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); }
+.rc-linkbox__r button{ appearance:none; border:1px solid var(--border); background:transparent; color:var(--text); font:inherit; padding:4px 7px; border-radius:0; cursor:pointer; }
+.rc-linkbox__r button:hover{ border-color:var(--text); }
