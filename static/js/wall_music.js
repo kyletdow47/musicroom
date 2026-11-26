@@ -164,6 +164,7 @@
     start.className = 'rc-music'; info.className = 'rc-info'; host.appendChild(start); host.appendChild(info);
     var status = host.querySelector('#rc-status'), say = function (t) { if (status) status.textContent = t || ''; };
     var centreOf = function (b) { return { x: b.x + b.w / 2, y: b.y + b.h / 2 }; };
+    var focusOn = function (b) { if (wall.flyTo) wall.flyTo(b); else { var c = centreOf(b); wall.panTo(c.x, c.y); } };          // (the Void flies there; the old wall pans)
     var nodeBlock = function (b) { return b && b.type === 'node' && b.data; };
 
     async function fetchWeb(q) {
@@ -178,9 +179,10 @@
       var plan = planWeb(web); if (!plan) throw new Error('Nothing to put on the wall.');
       var find = function (spec) { return wall.blocks.find(function (b) { return nodeBlock(b) && identOf(b.data) === identOf(spec); }); };
       var cb = o.anchor || find(plan.center), mid;
+      var nearTo = function (anchor) { return wall.nearBlocks ? wall.nearBlocks(anchor || null) : wall.blocks; };   // (in the Void: only what is at about that depth)
       if (cb) mid = centreOf(cb);
       else {                                                           // a new record goes where the person is looking, but not on top of what is there (room for its neighbours too)
-        var want = o.at || wall.viewCentreWorld(), rects = wall.blocks.map(function (b) { return { x: b.x, y: b.y, w: b.w, h: b.h }; });
+        var want = o.at || wall.viewCentreWorld(), rects = nearTo(null).map(function (b) { return { x: b.x, y: b.y, w: b.w, h: b.h }; });
         mid = freeSpot(rects, want, { w: 560, h: 520 }) || freeSpot(rects, want, { w: 200, h: 180 }) || want;
       }
       if (!cb) { var sz = sizeOf(Object.assign({}, plan.center, { home: !!o.home })); cb = wall.addNode('node', Object.assign({}, plan.center, { home: !!o.home }), mid, 0, sz); }
@@ -189,10 +191,11 @@
       var fresh = [], pairs = [];
       plan.items.forEach(function (it) {
         var nb = find(it.spec);
-        if (!nb) { nb = wall.addNode('node', it.spec, mid, it.d, sizeOf(it.spec)); fresh.push(nb); }
+        if (!nb) { nb = wall.addNode('node', it.spec, mid, it.d, sizeOf(it.spec), cb.c); fresh.push(nb); }          // (a neighbour belongs to its record's moment)
         if (nb !== cb) pairs.push([cb.id, nb.id]);
       });
-      var existing = wall.blocks.filter(function (b) { return fresh.indexOf(b) < 0; }).map(function (b) { var c = centreOf(b); return { id: b.id, x: c.x, y: c.y, r: radiusOf(b) }; });
+      var obst = nearTo(cb).filter(function (b) { return fresh.indexOf(b) < 0; }); if (obst.indexOf(cb) < 0) obst.push(cb);
+      var existing = obst.map(function (b) { var c = centreOf(b); return { id: b.id, x: c.x, y: c.y, r: radiusOf(b) }; });
       var around = wall.links.map(function (l) { return l.a === cb.id ? l.b : (l.b === cb.id ? l.a : null); }).filter(Boolean)
         .map(function (id) { var b = wall.blocks.find(function (x) { return x.id === id; }); return b ? centreOf(b) : null; }).filter(Boolean);
       var pos = settle(existing, cb.id, fresh.map(function (b) { return { id: b.id, r: radiusOf(b) }; }), { outward: outwardFrom(centreOf(cb), around), seed: 11 });
@@ -206,7 +209,7 @@
     async function grow(b) {
       var d = nodeBlock(b); if (!d || d.grown || isTag(d.kind)) return;
       var el = host.querySelector('.rc-block[data-id="' + b.id + '"]'); if (el) el.classList.add('busy'); say('Looking around ' + d.name + '…');
-      try { var web = await fetchWeb({ kind: d.kind, id: d.rid }); var r = placeWeb(web, { anchor: b }); say(r.fresh.length ? '' : d.name + ' has nothing more to add.'); }
+      try { var web = await fetchWeb({ kind: d.kind, id: d.rid }); var r = placeWeb(web, { anchor: b }); say(r.fresh.length ? '' : d.name + ' has nothing more to add.'); if (r.fresh.length && wall.flyToGroup) wall.flyToGroup([b].concat(r.fresh)); }
       catch (e) { say(e.message); }
       if (el) el.classList.remove('busy');
       if (sel === b.id) showInfo(b);
@@ -340,7 +343,7 @@
     function closeRecord() { var b = blockById(recId); rec.classList.remove('on'); rec.innerHTML = ''; recId = null; stopPreview(); if (b && blockById(sel)) showInfo(b); }
     function stepTo(dir) {
       var next = blockById(stepRecord(recordOrder(wall.blocks), recId, dir)); if (!next) return;
-      var c = centreOf(next); wall.panTo(c.x, c.y); openRecord(next);
+      focusOn(next); openRecord(next);
     }
     function saveNote() {
       var ta = rec.querySelector('.rc-page__note textarea'), b = blockById(recId), text = ta && ta.value.trim(); if (!text || !b) return;
@@ -356,7 +359,7 @@
       if (act === 'close') { wall.select(null); return; }
       if (act === 'recclose') { closeRecord(); return; }
       if (act === 'recprev' || act === 'recnext') { stepTo(act === 'recnext' ? 1 : -1); return; }
-      if (act === 'jump') { var t = blockById(btn.dataset.id); if (t) { var c = centreOf(t); wall.panTo(c.x, c.y); openRecord(t); } return; }
+      if (act === 'jump') { var t = blockById(btn.dataset.id); if (t) { focusOn(t); openRecord(t); } return; }
       if (act === 'note') { var nb = rec.querySelector('.rc-page__note'); if (nb) { nb.hidden = !nb.hidden; if (!nb.hidden) nb.querySelector('textarea').focus(); } return; }
       if (act === 'notesave') { saveNote(); return; }
       if (act === 'openurl') { var u = safeUrl(btn.dataset.url); if (u) fetch('/api/open-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: u }) }).catch(function () {}); return; }
@@ -396,7 +399,8 @@
       sm('Looking around…');
       try {
         var web = await fetchWeb(q), r = placeWeb(web, { at: startAt, home: true });
-        start.classList.remove('on'); say(''); wall.panTo(centreOf(r.center).x, centreOf(r.center).y); wall.select(r.center.id);
+        start.classList.remove('on'); say(''); wall.select(r.center.id);
+        if (wall.flyToGroup) wall.flyToGroup([r.center].concat(r.fresh)); else focusOn(r.center);          // (in the Void: stand back far enough to see what grew round it)
       } catch (e) { sm(e.message); }
     }
     var rowHtml = function (x, i) { return '<div class="rc-mrow" data-i="' + i + '">' + (x.image ? '<img src="' + esc(x.image) + '" alt="" loading="lazy">' : '<span class="ph"></span>') + '<div><b>' + esc(x.title) + '</b><small>' + esc([x.artist, x.album].filter(Boolean).join(' · ')) + '</small></div></div>'; };

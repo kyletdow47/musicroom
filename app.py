@@ -16231,6 +16231,13 @@ try:
 except ImportError:
     pass
 
+# The Void (the wall as a real 3D space, time as depth) keeps its own store and serves its pictures: void_store.py.
+try:
+    import void_store as _void_store
+    _void_store.register(app, get_setting, set_setting)
+except ImportError:
+    pass
+
 # Connections (the neighbourhood of a record: label, genres, other records, similar artists) lives in connections.py.
 try:
     import connections as _connections

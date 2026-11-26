@@ -99,7 +99,7 @@
       else if (a === 'group') { group = b.dataset.g; draw(); }
       else if (a === 'go') {                                               // take me there: on the wall, selected
         var blk = wall.blocks.find(function (x) { return x.id === b.dataset.id; }); if (!blk) return;
-        hide(); wall.panTo(blk.x + blk.w / 2, blk.y + blk.h / 2); wall.select(blk.id);
+        hide(); wall.select(blk.id); if (wall.flyTo) wall.flyTo(blk); else wall.panTo(blk.x + blk.w / 2, blk.y + blk.h / 2);
       }
     });
     // "/" opens the list ready to search; Esc closes it; Enter in the search goes to the first match

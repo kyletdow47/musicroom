@@ -45,7 +45,7 @@ out.fold = [P.fold('Électro ÉÑÍ'), P.fold(null), P.fold(undefined), P.fold(1
 out.filters = P.FILTERS.map(f => f[0]);
 const src = fs.readFileSync(process.argv[1], 'utf8');
 out.src = { slash: src.includes("e.key === '/'") && src.includes("!host.querySelector('.rc-page.on')"), esc: src.includes("open && e.key === 'Escape'") && src.includes('stopImmediatePropagation'), enter: src.includes("t.id === 'rc-lq'"),
-            go: src.includes('wall.panTo(blk.x + blk.w / 2, blk.y + blk.h / 2); wall.select(blk.id);'), esc2: src.includes('esc(r.title)') && src.includes('esc(r.sub)') && src.includes('esc(query)') };
+            go: src.includes('wall.select(blk.id); if (wall.flyTo) wall.flyTo(blk); else wall.panTo(blk.x + blk.w / 2, blk.y + blk.h / 2);'), esc2: src.includes('esc(r.title)') && src.includes('esc(r.sub)') && src.includes('esc(query)') };
 console.log(JSON.stringify(out));
 """
 r = subprocess.run([node, "-e", JS, JSF], capture_output=True, text=True, timeout=60)

@@ -15,6 +15,8 @@
 <script src="/static/js/conn_start.js"></script>
 <script src="/static/js/wall_music.js"></script>
 <script src="/static/js/wall_index.js"></script>
+<script src="/static/js/void_layout.js"></script>
+<script src="/static/js/void.js"></script>
 <script src="/static/js/page_tones.js"></script>
 {{ theme_head|safe }}
 <script>window.MR_WALL = {{ 'true' if fork_wall else 'false' }};   /* the fork's third tab, "Wall" (app.py FORK_WALL) */</script>
@@ -1183,7 +1185,7 @@
          are out of this build — their code stays, nothing leads to it. #}
       <button class="r3d-btn r3d-btn--home active" data-layout="grid" title="Your records" aria-label="Your records"><svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="9.6"/><circle cx="12" cy="12" r="3.5"/><circle cx="12" cy="12" r=".9" fill="currentColor" stroke="none"/><path d="M5.5 9.3a7.1 7.1 0 0 1 3.8-3.8" stroke-linecap="round"/></svg></button>
       <button class="r3d-btn" data-layout="grupa" title="Your grúpaí: playlists that hold anything — records from this room, tracks from Spotify and SoundCloud, labels, other music rooms">Grúpaí</button>
-      {% if fork_wall %}<button class="r3d-btn" data-layout="blocks" title="Your own wall: kept webs, quotes, words, images, mixes, links — make blocks, drag them, size them">Wall</button>{% endif %}
+      {% if fork_wall %}<button class="r3d-btn" data-layout="blocks" title="The Void: everything you save, floating in space with time as depth — scroll to fall back through it">Void</button>{% endif %}
       <button class="r3d-btn" data-layout="shop" id="r3d-shopbtn" hidden title="Records you have borrowed from the shop">Borrowed</button>
       {% else %}
       <button class="r3d-btn active" data-layout="cloud">Cloud</button>
@@ -1524,7 +1526,7 @@ function emptyTrialRoom(){
   document.body.classList.add('r3d-emptyroom');     // (the room's own strip needs records to work)
   row.innerHTML = `<button type="button" class="sim-tab on" data-to="records">Your records</button>
     <button type="button" class="sim-tab" data-to="grupa">Grúpaí</button>
-    ${window.MR_WALL ? '<button type="button" class="sim-tab" data-to="wall">Wall</button>' : ''}
+    ${window.MR_WALL ? '<button type="button" class="sim-tab" data-to="wall">Void</button>' : ''}
     <button type="button" class="sim-tab" data-to="shop" hidden>Borrowed</button>`;
   document.body.appendChild(row);
   const shop = document.getElementById('r3d-shop'), grupa = document.getElementById('r3d-grupa'), own = document.getElementById('r3d-own');
@@ -1538,7 +1540,7 @@ function emptyTrialRoom(){
     own.classList.toggle('on', which === 'records' && ownN > 0);
     shop.classList.toggle('on', which === 'shop');
     grupa.classList.toggle('on', which === 'grupa');
-    if (window.MR_WALL) { wall.classList.toggle('on', which === 'wall'); if (which === 'wall' && !wallApi && window.MRRoomCanvas) wallApi = window.MRRoomCanvas.mount(wall, { placeId: PLACE_ID }); }
+    if (window.MR_WALL) { wall.classList.toggle('on', which === 'wall'); if (which === 'wall' && !wallApi && window.MRRoomCanvas) wallApi = ((window.MRVoid ? window.MRVoid : window.MRRoomCanvas)).mount(wall, { placeId: PLACE_ID }); }
     if (which === 'shop' && window.SimShop) { if (!shopApi) shopApi = SimShop.mountMine(document.getElementById('r3d-shop-in'), { openPage: go }); else shopApi.refresh(); }
     if (which === 'grupa' && window.GrupaUI) { if (!grupaApi) grupaApi = GrupaUI.mount(document.getElementById('r3d-grupa-in'), { gid: 0, inRoom: true, openTrack: ()=>{}, openPage: go }); else grupaApi.refresh(); }
   };
@@ -2954,7 +2956,7 @@ function enterBlocks(){
   hideStructLabels();
   blocksEl.classList.add('on');
   if (!blocksApi && window.MRRoomCanvas){
-    blocksApi = window.MRRoomCanvas.mount(blocksEl, {
+    blocksApi = ((window.MR_WALL && window.MRVoid) ? window.MRVoid : window.MRRoomCanvas).mount(blocksEl, {          // (the fork's third tab is the Void; the full app keeps the old wall)
       placeId: PLACE_ID,
       getTracks: ()=>tracks,
       sntItem,
