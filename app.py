@@ -16235,6 +16235,12 @@ except ImportError:
 try:
     import void_store as _void_store
     _void_store.register(app, get_setting, set_setting)
+
+    @app.route("/api/void/mine")
+    def api_void_mine():
+        """Which place holds my Void (the Well, as for the room page), so My Public Room can publish a copy of it."""
+        w = query_one("SELECT id FROM places WHERE is_well=1")
+        return jsonify({"pid": w["id"] if w else 1})
 except ImportError:
     pass
 

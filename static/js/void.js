@@ -47,16 +47,32 @@
     return out;
   }
 
+  // A published Void arrives inside someone else's room design, so it is rebuilt from only what is understood before it is shown
+  function cleanSnapshot(s) {
+    var out = { blocks: [], links: [], next: 0 }; if (!s || typeof s !== 'object') return out;
+    var num = function (v) { return typeof v === 'number' && isFinite(v) ? v : null; }, seen = Object.create(null), ids = Object.create(null);
+    (Array.isArray(s.blocks) ? s.blocks : []).slice(0, 2000).forEach(function (b) {
+      if (!b || typeof b !== 'object' || typeof b.id !== 'string' || !/^[A-Za-z0-9_-]{1,40}$/.test(b.id) || seen[b.id] || !Object.prototype.hasOwnProperty.call(TYPES, b.type)) return;
+      var x = num(b.x), y = num(b.y), w = num(b.w), h = num(b.h); if (x === null || y === null || w === null || h === null) return;
+      seen[b.id] = 1; ids[b.id] = 1;
+      out.blocks.push({ id: b.id, type: b.type, x: x, y: y, w: Math.max(20, Math.min(4000, w)), h: Math.max(20, Math.min(4000, h)), c: num(b.c) > 0 ? b.c : 1, n: num(b.n) > 0 ? Math.floor(b.n) : 0, d: Math.max(-3, Math.min(3, Math.round(num(b.d) || 0))), data: b.data && typeof b.data === 'object' && !Array.isArray(b.data) ? b.data : {} });
+    });
+    (Array.isArray(s.links) ? s.links : []).slice(0, 6000).forEach(function (l) {
+      if (l && ids[l.a] && ids[l.b] && l.a !== l.b) out.links.push({ a: l.a, b: l.b, kind: l.kind === 'near' ? 'near' : 'mine', label: typeof l.label === 'string' ? l.label.slice(0, 80) : '' });
+    });
+    out.next = Math.max(num(s.next) || 0, 0); return out;
+  }
+
   function mount(host, opts) {
     opts = opts || {};
-    var placeId = opts.placeId;
+    var placeId = opts.placeId, ro = !!opts.readOnly;                 // readOnly: a published Void, shown to visitors (nothing can be changed or saved)
     var blocks = [], links = [], counter = 0, sel = null, saveT = 0, loaded = false, hooks = { select: [], click: [], dblclick: [] };
     var depth = VL.depths([]), items = {}, THREE = null, renderer = null, scene = null, camera = null, lineMine = null, lineNear = null, meshes = [];
     var T = (root.MRTones && root.MRTones.read) ? root.MRTones.read() : { bg: '#161513', text: '#f2efe8', muted: '#9b968a', dark: true };
     var reduced = !!(root.matchMedia && root.matchMedia('(prefers-reduced-motion: reduce)').matches);
     var fine = !!(root.matchMedia && root.matchMedia('(pointer: fine)').matches);
 
-    host.classList.add('rc', 'vd');
+    host.classList.add('rc', 'vd'); if (ro) host.classList.add('vd-ro');
     host.innerHTML =
       '<canvas class="vd-canvas"></canvas><div class="vd-caps"></div><div class="vd-date" id="vd-date"></div>' +
       '<div class="vd-tl" id="vd-tl"><div class="vd-tl__line"></div><div class="vd-tl__ticks"></div><div class="vd-tl__thumb"></div></div>' +
@@ -80,7 +96,7 @@
     }
 
     // ── keeping it ──
-    function dirty() { say('…'); clearTimeout(saveT); saveT = setTimeout(save, 600); }
+    function dirty() { if (ro) return; say('…'); clearTimeout(saveT); saveT = setTimeout(save, 600); }
     async function save() {
       try {
         var r = await fetch('/api/room/void/' + placeId, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ blocks: blocks, links: links, next: counter }) });
@@ -284,7 +300,7 @@
     function onDown(e) {
       if (e.button !== 0 && e.button !== 1) return;
       var id = pick(e); down = { x: e.clientX, y: e.clientY, id: id, moved: false, yaw: look.ty, pitch: look.tp, off: null };
-      if (id) { var it = items[id]; plane.set(new THREE.Vector3(0, 0, 1), -it.z); var p = new THREE.Vector3(); if (ray.ray.intersectPlane(plane, p)) down.off = { x: p.x - it.mesh.position.x, y: p.y - it.mesh.position.y }; }
+      if (id && !ro) { var it = items[id]; plane.set(new THREE.Vector3(0, 0, 1), -it.z); var p = new THREE.Vector3(); if (ray.ray.intersectPlane(plane, p)) down.off = { x: p.x - it.mesh.position.x, y: p.y - it.mesh.position.y }; }
       canvas.setPointerCapture(e.pointerId); ringEl.classList.add('down'); fly = null;
     }
     function onMove(e) {
@@ -306,7 +322,7 @@
     }
     function onUp(e) {
       ringEl.classList.remove('down'); var d = down; down = null; if (!d) return;
-      if (d.moved) { if (d.id) { var b = blockById(d.id); if (b) { b.x = Math.round(b.x); b.y = Math.round(b.y); changed(); } } return; }
+      if (d.moved) { if (d.id && !ro) { var b = blockById(d.id); if (b) { b.x = Math.round(b.x); b.y = Math.round(b.y); changed(); } } return; }
       if (d.id) {                                                                       // a click on a thing
         var blk = blockById(d.id); if (!blk) return;
         if (linkFrom) { var from = linkFrom; linkFrom = null; say(''); canvas.style.cursor = ''; if (from !== blk.id) addLink(from, blk.id); return; }
@@ -331,6 +347,12 @@
     function showSel(b) {
       if (!b) { selEl.classList.remove('on'); selEl.innerHTML = ''; return; }
       selEl.classList.add('on');
+      if (ro) {                                                                         // visitors: what it is, and a way out to it
+        var lab = root.WallIndex && root.WallIndex.pure ? root.WallIndex.pure.labelOf(b) : { title: '', sub: '' }, d0 = b.data || {};
+        var href = [d0.url, d0.deezer].filter(function (u) { return /^https?:\/\//.test(String(u || '')); })[0];
+        selEl.innerHTML = '<span class="vd-sel__n">' + pad(b.n) + '</span><span class="vd-sel__t">' + esc(lab.title) + (lab.sub ? ' <i>' + esc(lab.sub) + '</i>' : '') + '</span>' +
+          (href ? '<a href="' + esc(href) + '" target="_blank" rel="noopener noreferrer">[ Open ↗ ]</a>' : ''); return;
+      }
       selEl.innerHTML = '<span class="vd-sel__n">' + pad(b.n) + '</span>' + (b.type !== 'node' ? '<button data-v="edit">[ Edit ]</button>' : '') + '<button data-v="link">[ Link ]</button><button data-v="delete">[ Delete ]</button>';
     }
     selEl.addEventListener('click', function (e) {
@@ -435,7 +457,7 @@
     // ── start: the 3D engine, then the things ──
     api.ready = (async function () {
       var data = { blocks: [], links: [], next: 0 };
-      try { data = await (await fetch('/api/room/void/' + placeId)).json(); } catch (_) {}
+      if (ro) data = cleanSnapshot(opts.data); else try { data = await (await fetch('/api/room/void/' + placeId)).json(); } catch (_) {}
       blocks = Array.isArray(data.blocks) ? data.blocks : []; links = Array.isArray(data.links) ? data.links : []; counter = data.next | 0;
       try { THREE = await import('three'); } catch (e) { say('The Void needs the 3D engine, which did not load.'); loaded = true; intro(); return; }
       await fontsReady;
@@ -454,11 +476,11 @@
     host.__vd = api;                                       // (so a test, or the console, can ask where the camera is)
 
     // the music, the record page and the list join in (their own keys are registered first, so Esc closes a page before it leaves a thing)
-    if (root.WallMusic) root.WallMusic.attach(api);
+    if (root.WallMusic && !ro) root.WallMusic.attach(api);
     if (root.WallIndex) root.WallIndex.attach(api);
     return api;
   }
 
-  var api = { mount: mount, pictureUrl: pictureUrl, wrapLines: wrapLines, TYPES: TYPES };
+  var api = { mount: mount, cleanSnapshot: cleanSnapshot, pictureUrl: pictureUrl, wrapLines: wrapLines, TYPES: TYPES };
   if (typeof module !== 'undefined' && module.exports) module.exports = api; else root.MRVoid = api;
 })(typeof window !== 'undefined' ? window : this);

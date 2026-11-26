@@ -254,6 +254,7 @@
 <script src="/static/js/gr_nav.js"></script>
 <script src="/static/js/page_tones.js"></script>
 <script src="/static/js/explore_globe.js"></script>
+<script>window.MR_WALL = {{ 'true' if fork_wall else 'false' }};</script>
 <script>window.MR_MAP_LOOK = {{ (map_look() if map_look is defined else {})|tojson }};</script>
 <script src="/static/js/explore_map.js"></script>
 <script src="/static/js/crate_maker.js"></script>
@@ -369,7 +370,7 @@ function renderBlocks(){
             <button title="${b.on === false ? 'show' : 'hide'}" onclick="event.stopPropagation(); toggleBlock(${i})">${b.on === false ? '◌' : '●'}</button>
             <button title="remove" onclick="event.stopPropagation(); removeBlock(${i})">✕</button></div>`;
     }).join('') || '<div class="empty">Nothing yet — add a block.</div>';
-    $('add-menu').innerHTML = RoomBlocks.order.filter(t => !(window.MR_GR && t === 'places')).map(t => {   // no forest, no places in the trial: that block isn't offered (one already in a room still shows)
+    $('add-menu').innerHTML = RoomBlocks.order.filter(t => !(window.MR_GR && t === 'places') && !(t === 'void' && !window.MR_WALL)).map(t => {   // no forest, no places in the trial: that block isn't offered (one already in a room still shows)
         const d = RoomBlocks.BLOCKS[t]; return `<button onclick="addBlock('${t}')">${esc(d.label)}${d.hint ? `<small>${esc(d.hint)}</small>` : ''}</button>`; }).join('');
 }
 function toggleAdd(){ const m = $('add-menu'); m.style.display = m.style.display === 'none' ? '' : 'none'; }
@@ -425,6 +426,7 @@ function fieldHtml(b, f){
             const chosen = new Set((v || []).map(Number));
             return `<div class="f">${lab}<div class="reclist">${recs.map(r => `<label><input type="checkbox" data-pick-rec="${f.key}" value="${r.id}" ${chosen.has(r.id) ? 'checked' : ''}> ${esc(r.title)} <small style="color:var(--gr-faint)">${esc(r.artist || '')}</small></label>`).join('')}</div></div>`;
         }
+        case 'void': { const n = v && Array.isArray(v.blocks) ? v.blocks.length : 0; return `<div class="f">${lab}<button class="gr-btn gr-btn--small" onclick="publishVoid()">${n ? 'publish my Void again' : 'publish my Void'}</button><div class="hint">${n ? `Published: ${n} thing${n === 1 ? '' : 's'}${v.at ? ', ' + esc(new Date(v.at).toLocaleString()) : ''}. Visitors see this copy, not your live Void, until you publish again.` : 'Nothing published yet. This copies your Void as it is right now.'}</div></div>`; }
         case 'places': return `<div class="f">${lab}<button class="gr-btn gr-btn--small" onclick="snapshotPlaces()">use my places as they are now</button><div class="hint">${(v || []).length ? (v || []).map(p => esc(p.name)).join(' · ') : 'Nothing yet.'}</div></div>`;
         case 'items': return `<div class="f">${lab}<div class="items" id="items-${f.key}">${(v || []).map((it, i) => itemHtml(f, it, i)).join('')}</div>
             <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap"><button class="gr-btn gr-btn--small" onclick="itemAdd('${f.key}')">+ add</button>${f.from_showcase ? `<button class="gr-btn gr-btn--small" onclick="itemsFromShowcase('${f.key}')">+ from my showcase</button>` : ''}</div></div>`;
@@ -443,6 +445,17 @@ async function itemsFromShowcase(k){
     const d = await (await fetch('/api/showcase')).json(); const b = selBlock(); b[k] = b[k] || [];
     let n = 0; for (const it of (d.items || [])) { if (b[k].some(p => p.title === it.title && p.subtitle === it.subtitle)) continue; b[k].push({ title: it.title, subtitle: it.subtitle, url: it.url || '' }); n++; }
     renderInspector(); dirty(); status(n ? `+${n}` : 'none new');
+}
+async function publishVoid(){
+    // a frozen copy of the Void (things, lines, numbers) goes into this block; the rooms server keeps it with the design
+    try {
+        const pid = (await (await fetch('/api/void/mine')).json()).pid;
+        const d = await (await fetch('/api/room/void/' + pid)).json(); const b = selBlock();
+        if (!d.blocks || !d.blocks.length) { status('your Void is empty'); return; }
+        const snap = { blocks: d.blocks, links: d.links || [], next: d.next || 0, at: Date.now() };
+        if (JSON.stringify(snap).length > 200000) { status('too big to publish: remove some things'); return; }
+        b.snapshot = snap; renderInspector(); dirty(); status('published to this design: now Save and make it live');
+    } catch (e) { status('could not read your Void'); }
 }
 async function snapshotPlaces(){
     const d = await (await fetch('/api/gr/my/places')).json(); const b = selBlock();

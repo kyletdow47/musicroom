@@ -81,7 +81,7 @@ chk("window.MR_WALL && window.MRVoid" in tpl and ">Void</button>" in tpl and 'da
 css = open(os.path.join(PROJ, "static", "css", "room_canvas.css"), encoding="utf-8").read()
 vc = css[css.index("/* ── the Void:"):]
 chk(not re.search(r"#[0-9a-fA-F]{3,8}\b", vc) and "box-shadow" not in vc and "border-radius:0" in vc.replace(" ", ""), "the Void's styles use theme tokens only, square, no shadows")
-chk(all(c.startswith("vd") or c in ("rc-hud", "rc-ring") for c in set(re.findall(r"\.((?:vd|rc)-[a-z0-9_-]+)", vc))), "its new classes all start with vd (no clashes)")
+chk(all(c.startswith("vd") or c in ("rc-hud", "rc-ring", "rc-addwrap") for c in set(re.findall(r"\.((?:vd|rc)-[a-z0-9_-]+)", vc))), "its new classes all start with vd (no clashes)")
 
 print("")
 print("  ALL PASS" if not fails else f"  {len(fails)} FAILURE(S): {fails}")

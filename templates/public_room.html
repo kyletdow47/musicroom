@@ -9,6 +9,7 @@
     <link rel="stylesheet" href="/static/css/explore-theme.css">
     <link rel="stylesheet" href="/static/css/record_fonts.css">
     <link rel="stylesheet" href="/static/css/gr.css">
+    <link rel="stylesheet" href="/static/css/room_canvas.css">
     <style>
         /* The default structure of a public room. A room's design JSON sets
            the tokens; its own CSS (code mode) can restyle any of this; a full
@@ -25,6 +26,12 @@
             border-radius:999px; padding:5px 12px; font-family:inherit; font-size:.8rem; cursor:pointer; text-decoration:none; }
         .pr-bar a:hover, .pr-bar button:hover{ border-color:var(--pr-accent); color:var(--pr-accent); }
         .pr-bar .sp{ flex:1; }
+        .rb-void{ position:relative; height:82vh; margin:0 -24px; }
+        .rb-void__stage{ position:absolute; inset:0; }
+        .rb-void--full{ position:fixed; left:0; right:0; bottom:0; top:var(--pr-bar-h, 0px); height:auto; margin:0; z-index:1; }
+        .rb-void__tag{ position:absolute; right:22px; bottom:18px; max-width:min(46ch, 70vw); text-align:right; pointer-events:none; z-index:20; color:var(--pr-ink); font-size:.8rem; line-height:1.5; }
+        .rb-void__tag b{ font-weight:600; letter-spacing:.06em; text-transform:uppercase; font-size:.72rem; }
+        .rb-void__tag span{ display:block; opacity:.7; }
         .pr{ max-width:1100px; margin:0 auto; padding:28px 24px 90px; }
         .pr-head{ display:flex; gap:26px; align-items:flex-end; margin-bottom:34px; }
         .pr-head__img{ width:180px; height:180px; border-radius:10px; object-fit:cover; flex:none;
@@ -119,7 +126,12 @@ document.documentElement.classList.add('no-nav');
 <aside class="pr-gsheet" id="pr-gsheet"><button class="pr-gsheet__x" onclick="prGrupaClose()" title="Close" aria-label="Close">✕</button><div id="pr-gsheet-in"></div></aside>
 
 <script src="/static/vendor/gsap/gsap.min.js"></script>
+<script type="importmap">{ "imports": { "three": "/static/vendor/three/three.module.js" } }</script>
 <script src="/static/js/room_blocks.js"></script>
+<script src="/static/js/wall_index.js"></script>
+<script src="/static/js/void_layout.js"></script>
+<script src="/static/js/void.js"></script>
+<script src="/static/js/page_tones.js"></script>
 <script src="/static/js/grupa_ui.js"></script>
 <script src="/static/js/wish_note.js"></script>
 <script src="/static/js/report.js"></script>
@@ -235,7 +247,21 @@ function render(){
     if (ROOM.hidden) el.insertAdjacentHTML('afterbegin', `<div class="pr-note" style="border-color:var(--red,#c9412f)">The Music Room has taken this room down${ROOM.hidden.note ? ': ' + esc(ROOM.hidden.note) : ''}. ${ROOM.mine ? 'Only you can see it. Change it, then say so with the feedback button.' : ''}</div>`);
     el.querySelectorAll('[data-open]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); prOpen(a.dataset.open); }));
     el.querySelectorAll('[data-room-handle]').forEach(a => a.addEventListener('click', e => { e.preventDefault(); prRoom(a.dataset.roomHandle); }));
+    mountVoids(d);
     reveal();
+}
+
+// a published Void (the 'void' block) opens as a read-only 3D space; void.js rebuilds it from only what it understands
+function mountVoids(d){
+    if (!window.MRVoid) return;
+    const blocks = (window.RoomBlocks ? RoomBlocks.blocksOf(d, ROOM) : []) || [];
+    document.querySelectorAll('[data-void]').forEach(el => {
+        const b = blocks.find(x => x.id === el.dataset.void); if (!b || !b.snapshot || el.__vd) return;
+        const tag = el.querySelector('.rb-void__tag'); el.__vd = true;
+        const stage = document.createElement('div'); stage.className = 'rb-void__stage on'; el.prepend(stage);
+        const api = MRVoid.mount(stage, { readOnly: true, data: b.snapshot });
+        stage.classList.add('on'); if (tag) el.appendChild(tag);
+    });
 }
 
 // arrive: the name settles in, then the records, one after another

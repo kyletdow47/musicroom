@@ -136,6 +136,22 @@ window.RoomBlocks = (function () {
     render(b) { const items = b.items || []; return items.length ? `<section class="rb rb-picks">${heading(b, 'Picks')}<div class="rb-picks__list">${items.map(p => `<div class="rb-pick"><div class="rb-pick__t">${esc(p.title || '')}</div>${p.subtitle ? `<div class="rb-pick__s">${esc(p.subtitle)}</div>` : ''}${p.note ? `<div class="rb-pick__n">${esc(p.note)}</div>` : ''}${p.url ? `<a href="#" data-open="${esc(p.url)}">open ↗</a>` : ''}</div>`).join('')}</div></section>` : ''; },
   });
 
+  // The Void, published: a frozen copy of the owner's Void (things, lines, numbers), shown read-only in 3D (void.js
+  // mounts it; public_room.html does that after the page is drawn). The snapshot is stored inside the block itself.
+  register('void', {
+    label: 'Void', hint: 'Your Void, as a space visitors can fly through. Publish it here whenever you want to update it.',
+    schema: [
+      { key: 'snapshot', type: 'void', label: 'The Void' },
+      { key: 'full', type: 'toggle', label: 'Make it the whole room (full screen)', default: true },
+    ],
+    render(b, ctx) {
+      const n = b.snapshot && Array.isArray(b.snapshot.blocks) ? b.snapshot.blocks.length : 0;
+      if (!n) return '';
+      const r = ctx.room || {};
+      return `<section class="rb rb-void${b.full !== false ? ' rb-void--full' : ''}" data-void="${esc(b.id)}"><div class="rb-void__tag"><b>${esc(r.name || '')}</b>${r.bio ? ` <span>${esc(String(r.bio).slice(0, 140))}</span>` : ''}</div></section>`;
+    },
+  });
+
   register('places', {
     label: 'Places', hint: 'The places from your forest — their names and colours, how many records live there.',
     schema: [

@@ -423,3 +423,10 @@
 .vd-form label{ display:block; font-size:.62rem; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin:0 0 10px; }
 .vd-form input, .vd-form textarea{ display:block; width:100%; box-sizing:border-box; margin:4px 0 0; background:transparent; color:var(--text); border:1px solid var(--border); border-radius:0; padding:8px; font:inherit; font-size:.76rem; letter-spacing:0; text-transform:none; }
 .vd-form__x{ position:absolute; right:8px; top:6px; appearance:none; border:0; background:none; color:var(--text); font-size:1rem; cursor:pointer; }
+
+/* a published Void, shown to visitors: nothing to add or change, and the bar says what a thing is */
+.vd-ro .rc-addwrap, .vd-ro #rc-empty{ display:none !important; }
+.vd-ro .vd-sel__t{ color:var(--text); font-family:var(--f-mono); font-size:.72rem; letter-spacing:.08em; text-transform:uppercase; }
+.vd-ro .vd-sel__t i{ color:var(--muted); font-style:normal; text-transform:none; margin-left:6px; }
+.vd-ro .vd-sel a{ color:var(--text); font-family:var(--f-mono); font-size:.72rem; letter-spacing:.08em; text-decoration:none; text-transform:uppercase; }
+.vd-ro .vd-sel{ margin-left:170px; }                      /* (the app's player sits bottom left on a public room) */
